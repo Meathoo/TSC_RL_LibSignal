@@ -5,7 +5,9 @@ from common.registry import Registry
 
 import numpy as np
 from math import atan2, pi
+import torch
 import math
+from collections import deque
 
 class Intersection(object):
     '''
@@ -258,6 +260,21 @@ class World(object):
         #     self.intersection_ids = self.intersection_ids[0:5]
         self.id2intersection = {i.id: i for i in self.intersections}
         self.id2idx = {i: idx for idx,i in enumerate(self.id2intersection)}
+
+        # Intersection coordinates aligned with self.intersections order.
+        id2point = {
+            item['id']: item['point']
+            for item in non_virtual_intersections
+        }
+        self.intersection_points = np.array([
+            [float(id2point[iid]['x']), float(id2point[iid]['y'])]
+            for iid in self.intersection_ids
+        ], dtype=np.float32)
+        delta = self.intersection_points[:, None, :] - self.intersection_points[None, :, :]
+        self.intersection_distance = np.linalg.norm(delta, axis=-1)
+
+        # Queue history for sliding-window traffic coupling statistics.
+        self.queue_history = deque(maxlen=600)
         print("intersections created.")
 
         # id of all roads and lanes
@@ -299,7 +316,6 @@ class World(object):
             "time": self.eng.get_current_time,
             "vehicle_distance": self.eng.get_vehicle_distance,
             "pressure": self.get_pressure,
-            "lane_pressure": self.get_lane_pressure,
             "lane_waiting_time_count": self.get_lane_waiting_time_count,
             "lane_delay": self.get_lane_delay,
             "real_delay": self.get_real_delay,
@@ -317,13 +333,16 @@ class World(object):
         self.history_vehicles = set()
         self.real_delay= {}
 
-        # # get in_lanes and out_lanes
-        self.in_lanes, self.out_lanes = self.get_in_out_lanes()
+        # # get in_lines and out_lanes
+        # self.list_entering_lanes, self.list_exiting_lanes = self.get_in_out_lanes()
 
         # record lanes' vehicles to calculate arrive_leave_time
         self.dic_lane_vehicle_previous_step = {key: None for key in self.all_lanes}
         self.dic_lane_vehicle_current_step = {key: None for key in self.all_lanes}
         self.dic_vehicle_arrive_leave_time = dict()  # cumulative
+
+        # Initialize one queue snapshot so windowed stats are available from step 0.
+        self._record_queue_snapshot()
 
         print("world built.")
 
@@ -342,6 +361,19 @@ class World(object):
         self.dic_lane_vehicle_previous_step = {key: None for key in self.all_lanes}
         self.dic_lane_vehicle_current_step = {key: None for key in self.all_lanes}
         self.dic_vehicle_arrive_leave_time = dict()
+
+    def _compute_intersection_queue(self):
+        """Sum waiting queues on incoming lanes for each intersection."""
+        lane_waiting = self.eng.get_lane_waiting_vehicle_count()
+        queues = []
+        for inter in self.intersections:
+            q = sum(lane_waiting.get(lane, 0) for lane in inter.startlanes)
+            queues.append(float(q))
+        return np.array(queues, dtype=np.float32)
+
+    def _record_queue_snapshot(self):
+        """Append current per-intersection queue vector to rolling history."""
+        self.queue_history.append(self._compute_intersection_queue())
 
     def _update_arrive_time(self, list_vehicle_arrive):
         '''
@@ -482,45 +514,29 @@ class World(object):
                     pressure -= vehicles[lane]
             pressures[i.id] = pressure
         return pressures
-    
-    def get_in_out_lanes(self):
-        in_lanes = []
-        out_lanes = []
-        for i in self.intersections:
-            for road in i.in_roads:
-                from_zero = (road["startIntersection"] == i.id) if self.RIGHT else (
-                        road["endIntersection"] == i.id)
-                for n in range(len(road["lanes"]))[::(1 if from_zero else -1)]:
-                    in_lanes.append(road["id"] + "_" + str(n))
-            for road in i.out_roads:
-                from_zero = (road["endIntersection"] == i.id) if self.RIGHT else (
-                        road["startIntersection"] == i.id)
-                for n in range(len(road["lanes"]))[::(1 if from_zero else -1)]:
-                    out_lanes.append(road["id"] + "_" + str(n))
-        # add in_lanes of virtual intersections which can be regarded as out_lanes of non-virtual intersections.
-        for lane in self.all_lanes:
-            if lane not in out_lanes:
-                out_lanes.append(lane)
-        return in_lanes, out_lanes
 
-    def get_lane_pressure(self):
-        '''
-        get_lane_pressure
-        Get pressure of each lane in an intersection. 
-        Pressure of each lane equals to number of vehicles that in the in_lane minus number of vehicles that in out_lane.
-        
-        :param: None
-        :return pressures: pressure of each lane
-        '''
-        lvc = self.eng.get_lane_vehicle_count()
-        pressures = {}
-        pressures = {x:0 for x in self.in_lanes}
-        for inter_obj in self.intersections:
-            pressure = []
-            for start, end in inter_obj.lanelinks:
-                pressures[start] += lvc[start]
-                pressures[start] -= lvc[end]
-        return pressures
+    # return [self.dic_lane_waiting_vehicle_count_current_step[lane] for lane in self.list_entering_lanes] + \
+    # [-self.dic_lane_waiting_vehicle_count_current_step[lane] for lane in self.list_exiting_lanes]
+
+    # def get_in_out_lanes(self):
+    #     in_lines = []
+    #     out_lines = []
+    #     for i in self.intersections:
+    #         for road in i.in_roads:
+    #             from_zero = (road["startIntersection"] == i.id) if self.RIGHT else (
+    #                     road["endIntersection"] == i.id)
+    #             for n in range(len(road["lanes"]))[::(1 if from_zero else -1)]:
+    #                 in_lines.append(road["id"] + "_" + str(n))
+    #         for road in i.out_roads:
+    #             from_zero = (road["endIntersection"] == i.id) if self.RIGHT else (
+    #                     road["startIntersection"] == i.id)
+    #             for n in range(len(road["lanes"]))[::(1 if from_zero else -1)]:
+    #                 out_lines.append(road["id"] + "_" + str(n))
+    #     # add in_lanes of virtual intersections which can be regarded as out_lanes of non-virtual intersections.
+    #     for lane in self.all_lanes:
+    #         if lane not in out_lines:
+    #             out_lines.append(lane)
+    #     return in_lines, out_lines
 
     def get_vehicle_lane(self):
         '''
@@ -734,6 +750,7 @@ class World(object):
         # update current measurement
         self.update_current_measurements()
         self.vehicle_trajectory = self.get_vehicle_trajectory()
+        self._record_queue_snapshot()
 
     def reset(self):
         '''
@@ -749,6 +766,8 @@ class World(object):
         self._update_infos()
         # reset vehicles info
         self.reset_vehicle_info()
+        self.queue_history.clear()
+        self._record_queue_snapshot()
 
     def _update_infos(self):
         '''
@@ -844,8 +863,98 @@ class World(object):
         avg_delay = avg_delay / count
         return avg_delay
         
+    # add
 
+    def get_adjacency(self):
+        """Return edge_index and distance-based edge weights for graph communication."""
+        edges, weights = [], []
+        for road in self.roadnet['roads']:
+            start = road.get('startIntersection')
+            end = road.get('endIntersection')
 
+            # Skip roads connected to virtual/filtered intersections.
+            if start not in self.id2idx or end not in self.id2idx:
+                continue
+
+            i = self.id2idx[start]
+            j = self.id2idx[end]
+
+            length = road.get('length')
+            if length is None:
+                length = self.get_road_length(road)
+
+            w = 1.0 / (float(length) + 1e-3)
+            edges.append([i, j])
+            weights.append(w)
+
+        if not edges:
+            return torch.empty((2, 0), dtype=torch.long), torch.empty((0,), dtype=torch.float32)
+
+        return torch.tensor(edges, dtype=torch.long).T, torch.tensor(weights, dtype=torch.float32)
+
+    def get_arrival_rates(self, window=60):
+        """Proxy arrival feature: sliding-window mean queue for each intersection."""
+        if not self.queue_history:
+            self._record_queue_snapshot()
+        hist = np.stack(list(self.queue_history), axis=0)
+        win = max(1, min(int(window), hist.shape[0]))
+        mean_queue = hist[-win:].mean(axis=0)
+        return torch.tensor(mean_queue, dtype=torch.float32)
+
+    def get_queue_series(self, window=60):
+        """Return recent queue series with shape [T, N]."""
+        if not self.queue_history:
+            self._record_queue_snapshot()
+        hist = np.stack(list(self.queue_history), axis=0)
+        win = max(1, min(int(window), hist.shape[0]))
+        return torch.tensor(hist[-win:], dtype=torch.float32)
+
+    def get_coupling_matrix(self, window=60, d_max=None):
+        """Traffic coupling matrix from queue correlation with distance masking."""
+        series = self.get_queue_series(window=window).cpu().numpy()
+        n = series.shape[1]
+        if series.shape[0] < 2:
+            return torch.eye(n, dtype=torch.float32)
+
+        # Stable correlation for short/flat windows: avoid divide-by-zero warnings.
+        centered = series - series.mean(axis=0, keepdims=True)
+        std = centered.std(axis=0, keepdims=True)
+        valid = (std > 1e-8).astype(np.float32)
+        normed = np.divide(centered, std + 1e-8)
+        corr = (normed.T @ normed) / max(1, series.shape[0] - 1)
+        valid_mask = (valid.T @ valid) > 0.0
+        corr = np.where(valid_mask, corr, 0.0)
+        corr = np.clip(corr, -1.0, 1.0)
+
+        if d_max is None:
+            dist_mask = np.ones_like(corr, dtype=np.float32)
+        else:
+            dist_mask = (self.intersection_distance <= float(d_max)).astype(np.float32)
+        np.fill_diagonal(dist_mask, 1.0)
+
+        coupling = np.maximum(corr, 0.0) * dist_mask
+        np.fill_diagonal(coupling, 1.0)
+        return torch.tensor(coupling, dtype=torch.float32)
+
+    def get_dynamic_adjacency(self, window=60, d_max=None, min_strength=1e-3):
+        """Build dynamic edge list from coupling matrix."""
+        coupling = self.get_coupling_matrix(window=window, d_max=d_max)
+        n = coupling.shape[0]
+        edges, weights = [], []
+        for i in range(n):
+            for j in range(n):
+                if i == j:
+                    continue
+                w = float(coupling[i, j].item())
+                if w >= float(min_strength):
+                    edges.append([i, j])
+                    weights.append(w)
+
+        if not edges:
+            return self.get_adjacency()
+        return torch.tensor(edges, dtype=torch.long).T, torch.tensor(weights, dtype=torch.float32)
+
+    # add
 
 
 if __name__ == "__main__":

@@ -1,0 +1,72 @@
+includes:
+  - configs/tsc/base.yml
+
+
+model:
+  name: h2tsc
+  train_model: True
+  test_model: True
+  load_model: False
+  graphic: True
+
+  phase: True
+  one_hot: True
+  state_features: ["lane_count", "lane_waiting_count"]
+  vehicle_max: 50
+
+  learning_rate: 0.0001
+  critic_lr: 0.0001
+  batch_size: 128
+  gamma: 0.99
+  tau: 0.005
+  grad_clip: 5.0
+
+  epsilon: 0.5
+  epsilon_decay: 0.99997
+  epsilon_min: 0.02
+
+  policy_delay: 4
+  reward_scale: 0.05
+  actor_warmup_steps: 5000
+  actor_entropy_coef: 0.01
+  target_policy_noise: 0.025
+  target_noise_clip: 0.10
+  td3_clip_target: True
+  huber_beta: 1.0
+  use_system_mu: True
+  use_functional_call: False
+
+  gat_heads: 4
+  gat_layers: 2
+  gat_hidden_dim: 128
+  gat_dropout: 0.05
+
+  pe_dim: 32
+  hyper_hidden: [256, 512]
+  hyper_dropout: 0.05
+
+  actor_hidden1: 128
+  actor_hidden2: 64
+  critic_hidden: [256]
+  critic_hyper_hidden: [256, 512]
+
+
+trainer:
+  learning_start: 2000
+  buffer_size: 20000
+  steps: 3600
+  test_steps: 3600
+  action_interval: 10
+  episodes: 200
+  update_model_rate: 2
+  update_target_rate: 2
+  test_when_train: True
+  test_interval: 5
+  early_stop_patience: 6
+  load_best_for_test: True
+
+
+logger:
+  save_rate: 20
+  attention: False
+

@@ -1,4 +1,7 @@
 import logging
+import json
+import os
+from datetime import datetime
 from common.registry import Registry
 
 
@@ -30,6 +33,25 @@ class TSCTask(BaseTask):
     '''
     Register Traffic Signal Control task.
     '''
+    def _save_training_hyperparameters(self):
+        output_dir = Registry.mapping['logger_mapping']['path'].path
+        os.makedirs(output_dir, exist_ok=True)
+
+        hyperparameters = {
+            'saved_at': datetime.now().isoformat(timespec='seconds'),
+            'command': Registry.mapping['command_mapping']['setting'].param,
+            'trainer': Registry.mapping['trainer_mapping']['setting'].param,
+            'model': Registry.mapping['model_mapping']['setting'].param,
+            'world': Registry.mapping['world_mapping']['setting'].param,
+            'logger': Registry.mapping['logger_mapping']['setting'].param,
+        }
+
+        output_file = os.path.join(output_dir, 'hyperparameters.json')
+        with open(output_file, 'w', encoding='utf-8') as f:
+            json.dump(hyperparameters, f, ensure_ascii=False, indent=2, sort_keys=True)
+
+        logging.info(f"Hyperparameters saved to: {output_file}")
+
     def run(self):
         '''
         run
@@ -41,6 +63,7 @@ class TSCTask(BaseTask):
         try:
             if Registry.mapping['model_mapping']['setting'].param['train_model']:
                 self.trainer.train()
+                self._save_training_hyperparameters()
             if Registry.mapping['model_mapping']['setting'].param['test_model']:
                 self.trainer.test()
         except RuntimeError as e:

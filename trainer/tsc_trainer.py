@@ -34,6 +34,19 @@ class TSCTrainer(BaseTrainer):
         self.update_model_rate = Registry.mapping['trainer_mapping']['setting'].param['update_model_rate']
         self.update_target_rate = Registry.mapping['trainer_mapping']['setting'].param['update_target_rate']
         self.test_when_train = Registry.mapping['trainer_mapping']['setting'].param['test_when_train']
+        self.test_interval = max(
+            1,
+            int(Registry.mapping['trainer_mapping']['setting'].param.get('test_interval', 1))
+        )
+        self.early_stop_patience = int(
+            Registry.mapping['trainer_mapping']['setting'].param.get('early_stop_patience', 0)
+        )
+        self.load_best_for_test = bool(
+            Registry.mapping['trainer_mapping']['setting'].param.get('load_best_for_test', True)
+        )
+        self.best_test_travel_time = float('inf')
+        self.best_test_episode = -1
+        self.no_improve_rounds = 0
         # replay file is only valid in cityflow now. 
         # TODO: support SUMO and Openengine later
         
@@ -196,12 +209,32 @@ class TSCTrainer(BaseTrainer):
             for j in range(len(self.world.intersections)):
                 self.logger.debug("intersection:{}, mean_episode_reward:{}, mean_queue:{}".format(j, self.metric.lane_rewards()[j],\
                      self.metric.lane_queue()[j]))
-            if self.test_when_train:
-                self.train_test(e)
+            if self.test_when_train and e % self.test_interval == 0:
+                test_travel_time = self.train_test(e, mean_loss)
+                if test_travel_time + 1e-6 < self.best_test_travel_time:
+                    self.best_test_travel_time = test_travel_time
+                    self.best_test_episode = e
+                    self.no_improve_rounds = 0
+                    [ag.save_model(e='best') for ag in self.agents]
+                    self.logger.info(
+                        "New best TEST travel time %.4f at episode %d, saved as best checkpoint",
+                        self.best_test_travel_time,
+                        e,
+                    )
+                else:
+                    self.no_improve_rounds += 1
+                    if self.early_stop_patience > 0 and self.no_improve_rounds >= self.early_stop_patience:
+                        self.logger.info(
+                            "Early stop triggered at episode %d (best episode %d, best TEST travel time %.4f)",
+                            e,
+                            self.best_test_episode,
+                            self.best_test_travel_time,
+                        )
+                        break
         # self.dataset.flush([ag.replay_buffer for ag in self.agents])
         [ag.save_model(e=self.episodes) for ag in self.agents]
 
-    def train_test(self, e):
+    def train_test(self, e, train_loss=np.nan):
         '''
         train_test
         Evaluate model performance after each episode training process.
@@ -233,7 +266,7 @@ class TSCTrainer(BaseTrainer):
             e, self.episodes, self.metric.real_average_travel_time(), self.metric.rewards(),\
             self.metric.queue(), self.metric.delay(), int(self.metric.throughput())))
         self.writeLog("TEST", e, self.metric.real_average_travel_time(),\
-            100, self.metric.rewards(),self.metric.queue(),self.metric.delay(), self.metric.throughput())
+            train_loss, self.metric.rewards(),self.metric.queue(),self.metric.delay(), self.metric.throughput())
         return self.metric.real_average_travel_time()
 
     def test(self, drop_load=True):
@@ -252,7 +285,16 @@ class TSCTrainer(BaseTrainer):
                 self.env.eng.set_save_replay(False)
         self.metric.clear()
         if not drop_load:
-            [ag.load_model(self.episodes) for ag in self.agents]
+            loaded_best = False
+            if self.load_best_for_test:
+                try:
+                    [ag.load_model('best') for ag in self.agents]
+                    loaded_best = True
+                    self.logger.info("Loaded best checkpoint for final evaluation")
+                except Exception:
+                    loaded_best = False
+            if not loaded_best:
+                [ag.load_model(self.episodes) for ag in self.agents]
         attention_mat_list = []
         obs = self.env.reset()
         for a in self.agents:
@@ -292,10 +334,17 @@ class TSCTrainer(BaseTrainer):
         :param cur_throughput: current throughput
         :return: None
         '''
-        res = Registry.mapping['model_mapping']['setting'].param['name'] + '\t' + mode + '\t' + str(
-            step) + '\t' + "%.1f" % travel_time + '\t' + "%.1f" % loss + "\t" +\
-            "%.2f" % cur_rwd + "\t" + "%.2f" % cur_queue + "\t" + "%.2f" % cur_delay + "\t" + "%d" % cur_throughput
+        res = (
+            Registry.mapping['model_mapping']['setting'].param['name']
+            + '\t' + mode
+            + '\t' + str(step)
+            + '\t' + f"{travel_time:.4f}"
+            + '\t' + f"{loss:.6f}"
+            + "\t" + f"{cur_rwd:.4f}"
+            + "\t" + f"{cur_queue:.4f}"
+            + "\t" + f"{cur_delay:.4f}"
+            + "\t" + f"{int(cur_throughput)}"
+        )
         log_handle = open(self.log_file, "a")
         log_handle.write(res + "\n")
         log_handle.close()
-

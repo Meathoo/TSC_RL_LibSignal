@@ -8,7 +8,7 @@ world:
   seed: 0
   dir: data/
 
-  saveReplay: True
+  saveReplay: False
   report_log_mode: normal # cbengine
   report_log_rate: 10
 
@@ -55,7 +55,7 @@ logger:
   replay_dir: "replay/"
   model_dir: "model/"
   data_dir: "dataset/"
-  save_model: True
+  save_model: False
   save_rate: 5
   attention: False
 

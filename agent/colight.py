@@ -488,6 +488,12 @@ class MultiHeadAttModel(MessagePassing):
         self.att_list = []
         self.att = None
 
+    # Some PyG versions generate a subclass-level propagate() signature that
+    # does not expose kwargs (e.g., x=...), while MessagePassing.propagate does.
+    # Route through the base implementation to keep old call-sites compatible.
+    def propagate(self, edge_index, size=None, x=None):
+        return MessagePassing.propagate(self, edge_index=edge_index, size=size, x=x)
+
     def _forward(self, x, edge_index):
         # TODO: test batch is shared or not
 

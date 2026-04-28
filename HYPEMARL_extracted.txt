@@ -1,0 +1,1090 @@
+
+
+===== PAGE 1 =====
+
+HYPEMARL: MULTI-AGENTREINFORCEMENTLEARNINGFOR
+HIGH-DIMENSIONAL, PARAMETRIC,ANDDISTRIBUTED
+SYSTEMS
+Nicolò Botteghi1,*, Matteo Tomasetto2,*, Urban Fasel3, Francesco Braghin2, and Andrea Manzoni1
+1MOX – Department of Mathematics, Politecnico di Milano, Milano, Italy
+2Department of Mechanical Engineering, Politecnico di Milano, Milano, Italy
+3Department of Aeronautics, Imperial College London, London, United Kingdom
+*Equal contribution
+ABSTRACT
+Deep reinforcement learning has recently emerged as a promising feedback control strategy for
+complex dynamical systems governed by partial differential equations (PDEs). When dealing with
+distributed, high-dimensional problems in state and control variables, multi-agent reinforcement
+learning (MARL) has been proposed as a scalable approach for breaking the curse of dimensionality.
+In particular, through decentralized training and execution, multiple agents cooperate to steer the
+system towards a target configuration, relying solely on local state and reward information. However,
+the principle of locality may become a limiting factor whenever a collective, nonlocal behavior
+of the agents is crucial to maximize the reward function, as typically happens in PDE-constrained
+optimal control problems. In this work, we proposeHypeMARL: a decentralized MARL algorithm
+tailored to the control of high-dimensional, parametric, and distributed systems. HypeMARL employs
+hypernetworks to effectively parametrize the agents’ policies and value functions with respect to
+the system parameters and the agents’ relative positions, encoded by sinusoidal positional encoding.
+Through the application on challenging control problems, such as density and flow control, we show
+that HypeMARL(i)can effectively control systems through a collective behavior of the agents,
+outperforming state-of-the-art decentralized MARL,(ii)can efficiently deal with parametric depen-
+dencies,(iii)requires minimal hyperparameter tuning and(iv)can reduce the amount of expensive
+environment interactions by a factor of ∼10 thanks to its model-based extension,MB-HypeMARL,
+which relies on computationally efficient deep learning-based surrogate models approximating the
+dynamics locally, with minimal deterioration of the policy performance.
+KeywordsMulti-agent reinforcement learning · Optimal control · Collective behavior · Hypernetworks · Positional
+encoding
+1 Introduction
+Many modern and large-scale engineering systems are composed of many smaller subsystems, such as in robotics,
+sensor networks, transportation systems, smart grids, and biological networks. We refer to these systems asdistributed
+systems, consisting of the interconnection of two or more subsystems that work together to perform complex tasks
+[1]. The control of distributed systems relies on two or more controllers, each receiving an observation stream from a
+local sensor and providing a control input to the local subsystem. Unlikecentralizedsystems, where a single controller
+controls the behavior of the entire system, distributed systems rely ondecentralizeddecision-making. Each controller
+typically operates autonomously, often with only partial knowledge of the global state, and interacts with its neighbors.
+The central challenge lies in designing local yet coordinated control strategies that leverage only limited and local
+information, ensuring optimal behavior across the entire system. The a priori design of an effective control strategy may
+be very difficult or even impossible due to the complexity inherent in distributed systems. Indeed, the controllers might
+arXiv:2509.16709v1  [cs.LG]  20 Sep 2025
+
+===== PAGE 2 =====
+
+HypeMARL for high-dimensional, parametric, and distributed systems
+need to reach agreement on a shared quantity, maintain a collective formation, synchronize behaviors, or optimize
+a common cost function. On top of that, the controllers may be heterogeneous, have different dynamics, sensing
+capabilities, or objectives. Additionally, the controller’s behavior often needs to be updated online in order to reflect, for
+instance, changes in the environment over time, while gradually improving the performance of the whole distributed
+system [2].
+Reinforcement learning(RL) is a branch of machine learning concerned with howagents, namely the controllers of
+the distributed system, should takeactions, namely select control inputs, in an environment in order to maximize their
+cumulative reward [3]. Since the agent does not initially know which actions will yield the highest reward, it must
+explore different strategies to improve its behavior, balancing the trade-off between exploiting known high-reward
+actions and exploring new, potentially even higher-reward actions. This framework is suitable for a wide range
+of sequential decision-making problems, such as game playing, robotic control, autonomous driving, and resource
+management, to mention a few. The agent’s behavior is defined by itspolicy π, namely the set of rules that the agent
+exploits to select a specific action in a given state. The policy may be either stochastic π:R Ny ×R Nu →[0,1] or
+deterministic π:R Ny →R Nu, where Ny and Nu denote the dimensions of the state and action space, respectively.
+The agent’s goal is to find the optimal policy, i.e., the policy that maximizes the total expected cumulative reward from
+every state. RL algorithms can be classified according to the strategy used to find the optimal policy:(i) value-based
+methods,(ii) policy-based methods, and(iii) actor-critic methods. Value-based methods look for an estimate of the
+state-action value function Q:R Ny ×R Nu →R associated with a policy π. The state-action value function gives
+the expected return obtained when following the policy π, starting from a given state. Policy-based methods, instead,
+consider a parametrization of the policy πθ with respect to a set of parameters θ – which may be, for instance, neural
+network (NN) weights and biases – and aim at optimizing those parameters through the policy gradient [4, 3] Eventually,
+actor-critic strategies combine the estimation of the value function with the direct optimization of the policy parameters.
+Another important distinction regarding RL algorithms is that between(i) model-freeand(ii) model-basedalgorithms.
+Model-free algorithms utilize data collected from the interaction with the environment to directly learn the optimal
+policy and value function. Conversely, model-based RL exploits the data stream to build asurrogatemodel of the
+environment dynamics that serves as a computationally efficient proxy of the real environment to optimize the control
+strategy.
+Multi-agent reinforcement learning(MARL) is the generalization of RL to multi-agent systems where optimal policies
+have to be determined for a set of agents. Typical application domains of MARL are distributed control [ 2], multi-
+robot systems [ 5, 6], resource management [ 7], games and competitive environments [ 8, 9], autonomous driving
+and traffic control [ 10, 11, 12], and only recently flow control [ 13, 14]. An important distinction among MARL
+algorithms lies in the assumptions made when training and deploying the agents. In particular, we can identify three
+classes of methods, namely(i) centralized training and execution,(ii) decentralized training and execution, and(iii)
+centralized training and decentralized execution. In the centralized training and execution approach, all agent share
+all the state observations with each other during the learning and deployment phase. In this case, the value function
+is defined using the state and joint actions space, i.e. Q:R Ny ×R Nu →R , while the stochastic policy of the ith
+agent is πi :R Ny ×R Nui →[0,1] , where RNui denotes the local action space of the ith agent with dimension Nui.
+Conversely, decentralized training and execution approaches assume no shared knowledge among the agents, with every
+agent relying solely on local information. This results in local value functions and policies based only on local state
+information, i.e. Qi :R Nyi ×R Nui →R and πi :R Nyi ×R Nui →[0,1] , where Nyi denotes the dimension of the
+local state space. Eventually, centralized training and decentralized execution methods combine the two aforementioned
+strategies, with observations shared among the agents during training, while only local state information is taken into
+account during execution. This third case is a hybrid case of the first two, in which a global value function is estimated,
+namely Q:R Ny ×R Nu →R , and a local policy is optimized, namely πi :R Nyi ×R Nui →[0,1] . Recent research
+in MARL has focused on centralized training and decentralized execution approaches. Examples in this direction are
+multi-agent DDPG (MADDPG) [15], multi-agent PPO [16], multi-agent trust region policy optimization [ 17], and
+multi-agent attention actor-critic [18]. However, when dealing with a large number of agents, learning a joint value
+function is extremely difficult [18]. To mitigate this issue, it is possible to consider value factorization methods, such
+as value decomposition network [19], QMIX [20], FacMADDPG [21], QTRAN [22], and mean-field MARL [ 23],
+which learn a factorization of the joint value function. However, these methods suffer from relative overgeneralization,
+where policies converge to suboptimal joint actions [24, 25]. While independent Q-learning has been first proposed in
+[26], decentralized approaches – such as, e.g., independent PPO [25] and independent actor-critic COMA [27] – have
+recently regained popularity as they outperform centralized approaches in very complex and high-dimensional problems
+[25]. It is important to notice that, while independent learning improves algorithm complexity, it often does not work
+well when the task requires coordination among the agents [28, 29]. Many other factors can be used to classify MARL
+algorithms, such as the number of agents, the assumptions on the rewards, or the type of communication among the
+agents: for the sake of conciseness, we refer the reader to [30] for additional details.
+2
+
+===== PAGE 3 =====
+
+HypeMARL for high-dimensional, parametric, and distributed systems
+FLOW CONTROL
+ DENSITY CONTROL
+LOCAL 
+STATE
+LOCAL 
+ACTION
+HYPERNETWORK
+STATES ACTIONS
+POLICY
+POSITIONAL 
+ENCODING
+SYSTEM 
+PARAMETERS
+SURROGATE 
+MODEL
+ENVIRONMENT
+Figure 1: HypeMARL for control of high-dimensional, parametric and distributed systems. Each agent relies on local
+rewards ri,t to learn the optimal local policy. After training, the local policy provides the optimal action for every
+agent over time ui,t =π(y i,t;θπ,i), starting from the local state yi,t. To specialize the policy with respect to different
+agents, the policy parameters θπ,i are determined through a hypernetwork with respect to positional encoding of the
+agent’s relative position PE(pi) and the system parameters µ, that is θπ,i =H π(PE(pi),µ;θ H). While model-free
+HypeMARL interacts with the real environment yt+1 =F(y t,u t;µ) , where yt and ut collect the local state and
+control values, respectively, the model-based version MB-HypeMARL learns a surrogate model approximating the
+local dynamics ˜yi,t+1 = ˜F(yi,t,u i,t;µ)in order to enhance sample efficiency and speed up training.
+In this research, we proposeHypeMARL: a novel decentralized MARL algorithm tailored to the control of high-
+dimensional, parametric, and distributed systems described in terms of nonlinear, time-dependent, partial differential
+equations (PDEs). Specifically, we employhypernetworks[ 31] to learn an effective parametrization of local policies
+and value functions with respect to the system parameters and the agents’ relative positions. Hypernetworks are a
+class of NNs that provide the parameters, i.e. the weights and biases, of other NNs, often referred to as main or
+primary networks. Hypernetworks improve the expressivity and performance of NN-based architectures, with promising
+results in a wide variety of deep learning problems, including continual learning, causal inference, transfer learning,
+weight pruning, uncertainty quantification, zero-shot learning, natural language processing, and recently DRL [ 32].
+Hypernetworks in DRL were first exploited in [33] to learn the parameters of the NNs modeling the value function or
+the policy. In the context of meta RL, zero-shot RL, continual RL, and control of parametric PDEs, hypernetworks
+have been employed by [34, 35, 36, 37] to improve the training and generalization performance of RL agents. In the
+context of decentralized MARL, instead, hypernetworks are an effective way to achieve parameter sharing, which is
+an important strategy for improving the agents’ performance and scaling to large numbers of agents by significantly
+reducing the number of learnable parameters and consequently training times [30, 26, 38, 39].
+A summary of the HypeMARL strategy is provided in Figure 1. In particular, we utilize the knowledge of the system
+parameter µ and the relative position of each agent with respect to the others pi as input to two hypernetworks aiming
+at learning the parameters of each agent’s policy and value function, respectively. The relative position of each agent is
+provided usingsinusoidal position encoding[ 40], as taken into account in natural language processing to encode the
+position of each word in a sentence. The encoding via hypernetworks of the physical system information and of the
+inter-agents relations enables effective coordination and enhances generalization capabilities. Besides the model-free
+HypeMARL strategy, we also propose a model-based extension, namedmodel-based HypeMARL (MB-HypeMARL),
+where we learn a computationally efficient deep learning-based surrogate model approximating the local environment
+dynamics, resulting in faster training procedures with minimal deterioration of the policy performance. To assess the
+3
+
+===== PAGE 4 =====
+
+HypeMARL for high-dimensional, parametric, and distributed systems
+performance of the proposed algorithms, we consider different high-dimensional, parametric, and distributed control
+problems, namelydensity controlin a vacuum and in a fluid, andflow controlwith different actuation strategies, such as
+jets and shape-morphing obstacles.
+2 Hypernetwork-based positional encoding for multi-agent reinforcement learning
+Let us consider a potentially high-dimensional, nonlinear, time-dependent, and parametric dynamical system discretized
+through suitable time and space discretization schemes
+yt+1 =F(y t,u t;µ)(1)
+where yt and yt+1 ∈R Ny represent, respectively, the system state at time step t and t+ 1 , with Ny indicating the
+dimension of the state and t= 1, ..., Tmax the time steps, and ut ∈R Nu denotes the Nu-dimensional control input at
+time step t, F:R Ny ×R Nu ×R Nµ →R Ny is the state transition map, and µ∈R Nµ is a Nµ-dimensional parameter
+vector belonging to a suitable parameter space RNµ. The dynamical system may be high-dimensional in state and
+control dimensions, i.e. Ny ≫1 and Nu ≫1 , making the use of single-agent RL unfeasible. Therefore, we cast the
+control problem of such a system as a MARL problem in which each agent relies solely on local state measurements
+and on the knowledge of the system parameters µ to determine its actions. Similarly to [ 41], the policy and value
+function are explicitly dependent on the parameter vector µ to enhance the agent’s performance when dealing with
+systems showing parametric dependencies.
+Instead of learning a global policy ut =π(y t;µ) , we learn a local policy ui,t =π(y i,t;θπ,i), obtained as specializa-
+tions of the policy π with respect to the local measurements of the state yi and with parameters θπi dependent on the
+different relative agent positions pi and system parameters µ. While many positional encoding strategies have been
+proposed [42], in this work we focus on sinusoidal positional encoding [40]. Doing so, the relative position of an agent
+pi is embedded into a higher-dimensional vectorPEusing sine and cosine functions at different frequencies
+PE(pi) =
+
+sin
+ pi
+ω1
+
+,cos
+ pi
+ω1
+
+,sin
+ pi
+ω2
+
+, . . . ,sin
+ pi
+ωd
+
+,cos
+ pi
+ωd
+
+,(2)
+where ωj =n 2j/d for 1≤j≤d , with d being the dimension of the positional embedding vector and n a constant
+value. In this work, we set d= 2048 and n= 1000 . The knowledge of the relative position is crucial to specialize the
+independent agents even when observing the same state values and to achieve coordinated strategies even though relying
+solely on local information. The positional encoding vectorPE(p i)may be concatenated to the local statey t
+i and the
+system parameters µ, and provided as input to the agent’s policy and value function. However, following the work in
+[37], we propose to split the state and parameter dependencies through the use of two hypernetworks, namely Hπ and
+HQ, which parametrize the weights and biases of the policy and value function with respect to positional encoding
+PE(pi) and system parameters µ. Specifically, the hypernetworks Hπ :R d+Nµ →R Nθπ and HQ :R d+Nµ →R NθQ
+learn the parameters θπ,i and θQ,i of the NNs modeling the ith-local policy and value function, respectively. The
+parameters of the local policies and the hypernetworks, namely θHπ and θHQ are jointly updated by minimizing a
+prescribed loss function.
+HypeMARL relies on the twin-delayed deep deterministic policy gradient algorithm (TD3) [43] as the core RL algorithm.
+TD3 is an actor-critic method that learns a deterministic policy while estimating the value function. See Appendix B for
+further details on the TD3 algorithm. Differently from its model-free counterpart, MB-HypeMARL exploits a local
+surrogate model of the dynamics yi,t+1 ≈ ˜yi,t+1 = ˜F(yi,t,u i,t;µ) to generate additional samples while learning
+policy and value function, drastically reducing the interactions with the real environment, as shown in Section 3.
+Model-free HypeMARL relies only on local information to learn the policy and the value function through the TD3
+algorithm. In particular, combining hypernetworks and positional encoding, we can write the local policy of theith-agent
+as
+θπ.i =H π(PE(pi),µ;θ Hπ )
+ui,t =π(y i,t;θπ,i), (3)
+and the local value function as
+θQ,i =H Q(PE(pi),µ;θ HQ)
+qi,t =Q(y i,t,u i,t;θQ,i). (4)
+In the context of MARL, hypernetworks can be viewed as an effective form of parameter sharing. Indeed, the two
+hypernetworks in Equations (3) and (4) are exploited to specialize the weights and biases of the policy and value
+4
+
+===== PAGE 5 =====
+
+HypeMARL for high-dimensional, parametric, and distributed systems
+function for every agent. It is worth mentioning that the hypernetwork-based parametrization of policy and value
+function can be used in combination with any RL algorithm, without changing its core working principles.
+In general, model-free MARL can be quite sample inefficient. Sample efficiency may be a limiting factor for very
+complex systems where only limited data can be collected and their simulation is extremely computationally expensive.
+To mitigate this issue, we propose MB-HypeMARL, aiming to reduce the number of environment interactions. MB-
+HypeMARL learns a surrogate model of the local dynamics ˜F that can be autoregressively queried to predict the local
+evolution of the system
+˜yi,t+1 = ˜F( ˜yi,t,u i,t;µ),(5)
+where we indicate with ˜yi,t+1 and ˜yi,t the states predicted by the surrogate model ˜F to distinguish them from the
+real-environment states yi,t+1 and yi,t. Specifically, we approximate ˜F( ˜yi,t,u i,t;µ) = ˜F( ˜yi,t,u i,t,µ;θ ˜F ) with
+a shallow neural network of parameters θ ˜F . Using the data collected from the real-environment interaction, the
+parameters of the local forward model θ ˜F are optimized by minimizing the prediction error between the samples from
+the environmenty t+1 and the surrogate model predictions ˜yt+1, that is the loss function
+L(θ ˜F ) =E yt,ut,yt+1,µ
+" NX
+i=1
+||yi,t+1 − ˜yi,t+1||2
+2
+#
+=E yt,ut,yt+1,µ
+" NX
+i=1
+||yi,t+1 − ˜F(yi,t,u i,t,µ;θ ˜F )||2
+2
+#
+.
+(6)
+The pseudo-code of the two variants of HypeMARL, namely model-free HypeMARL and model-based HypeMARL
+(MB-HypeMARL), are summarized in Algorithm 1.
+Algorithm 1HypeMARL and MB-HypeMARL
+1:Initialize models’ parameters and noise varianceσ 2
+2:Set maximum number of episodesE max and time stepsT max
+3:fore= 1 :E max do
+4:Sampleµ
+5:Get initial measurementy i,1 fori= 1 :N
+6:Set ˜yi,1 =y i,1 fori= 1 :N
+7:fort= 1 :T max do
+8:Sampleθ π,i =H π(PE(pi),µ;θ Hπ )fori= 1 :N
+9:ifinteract with real environmentthen
+10: Sample ui,t ∼π(y i,t;θπ,i)+ϵ , where ϵ∼ N(0,σ2) for i= 1 :N
+11:Apply joint actionu t = [u1,t, . . . ,uN,t]⊤
+12:Observey i,t+1 =F(y t,u t,µ)fori= 1 :N
+13:Compute local rewardsr i,t fori= 1 :N
+14:iftrain modelsthen
+15: Update π and Q using the tuple (yi,t,u i,t, ri,t,y i,t+1,µ) i=1:N
+16:Update ˜Fusing the tuple(y i,t,u i,t, ri,t,y i,t+1,µ) i=1:N
+17:end if
+18:else ifinteract with surrogate environmentthen
+19: Sample ui,t ∼π( ˜yi,t;θπ,i)+ϵ , where ϵ∼ N(0,σ2) for i= 1 :N
+20:Apply joint actionu t = [u1,t, . . . ,uN,t]
+21:Observe ˜yi,t+1 = ˜F( ˜yi,t,u i,t,µ;θ ˜F )fori= 1 :N
+22:Compute rewards˜r i,t fori= 1, ..., N
+23:iftrain modelsthen
+24: Update π and Q using the tuple (˜yi,t,u i,t,˜ri,t, ˜yi,t+1,µ) i=1:N
+25:end if
+26:end if
+27:end for
+28:end for
+5
+
+===== PAGE 6 =====
+
+HypeMARL for high-dimensional, parametric, and distributed systems
+3 Numerical results
+In this section, we present the numerical results obtained when applying HypeMARL to four high-dimensional,
+parametric, and distributed control problems. Section 3.1 presents two applications dealing withdensity control, while
+Section 3.2 presents two applications onflow controlproblems with different distributed actuation strategies. It is
+worth highlighting that, due to the high-dimensionality of these problems in terms of states and, especially, controls, a
+single-agent RL algorithm is not a viable option, as shown in the Appendix C. In recent years, decentralized MARL has
+shown promising results in controlling distributed systems governed by partial differential equations [13, 14, 44], and it
+will be used as a baseline in the following sections to compare with HypeMARL and MB-HypeMARL. Differently
+from HypeMARL, decentralized MARL does not take into account positional encoding and hypernetworks, with local
+policies that predict local control actions relying solely on local state values and system parameters. It is important to
+note that HypeMARL requires minimal hyperparameter tuning. Indeed, all the test cases presented take into account the
+same architectures for NNs and positional encoding, as described in Section 2 and Appendix D, and the same training
+setting.
+3.1 Density control
+This section presents two challenging test cases in which the aim is to move a Gaussian density from a random initial
+mean position to a desired target position by optimally steering the source of a diffusion-advection PDE. In particular,
+inspired by [45], we consider two settings: density control in a vacuum and in a parametric fluid. While the former
+case does not consider an underlying transport effect, the latter deals with a fluid moving the density upwards. Density
+control may be of interest in several scientific fields. Indeed, density functions serve as macroscopic models of different
+quantities, such as, e.g., drone or wildlife swarms, traffic, and concentrations of pollutants or chemicals, to mention a
+few.
+3.1.1 Density control in a vacuum
+In this section, we present the first test case dealing with density control in a vacuum, i.e. we do not take into account an
+underlying transport effect, such as a wind or a water current, moving the density. Let y(x, t)∈R be the state variable
+representing a density function in the space-time domain Ω×(0, T] , with final time T >0 . The state dynamics is
+described by the Fokker-Planck equation
+
+
+
+∂y
+∂t −κ∆y=uinΩ×(0, T]
+∇y·n= 0on∂Ω×(0, T]
+y(x,0) =y 0(x;µ0)inΩ,
+(7)
+where Ω = (−1,1) 2 is the spatial domain, κ= 0.001 is the diffusion coefficient, n is the outward normal versor to
+the boundary ∂Ω, and u(x, t)∈[−5,5]⊂R is the external source term. Starting from a Gaussian density with fixed
+variance equal to0.05and random meanµ 0 = (µ0,1, µ0,2), that is
+y0(x;µ0) = 10
+π exp(−10(x1 −µ 0,1)2 −10(x 2 −µ 0,2)2),(8)
+where x= (x 1, x2)∈Ω , the density slightly diffuses over time. The goal in this setting is to move the density
+from a random initial position µ0 ∈[−0.75,0]×[−0.75,0.75] to a desired final destination µT = (µT,1 , µT,2 )∈
+[0,0.75]×[−0.75,0.75] . To do so, we control the term u in Equation (7) over the whole domain Ω, which can be
+interpreted as a source or a sink effect. Notice that only the target destination selected by the controller is regarded as a
+system parameter, i.e. µ=µ T , while the initial position µ0 is implicitly captured by the local states observed in the
+algorithm. Notice also that, after discretizing the spatial domain with a regular mesh, the dimensionality of the state
+and the control is equal to Ny =N u = 1089, thus resulting in a high-dimensional and distributed control problem. In
+addition, to solve the Fokker-Planck equation with the finite element method, we utilize a uniform time discretization of
+the interval[0, T]with time step∆t= 0.1s and final timeT= 1s.
+We employ MARL, HypeMARL and MB-HypeMARL to learn a parametric policy capable of controlling this challeng-
+ing high-dimensional, parametric, and distributed setting. The local rewards ri,t maximized while training the local
+agents are defined as
+ri,t =r(y i,t, ui,t;µ) =−(y i,t −y i,T (µ))2,(9)
+wherey i,T (µ) =y T (x;µ)corresponds to the local values of the target Gaussian density
+yT (x;µT ) = 10
+π exp(−10(x1 −µ T,1 )2 −10(x 2 −µ T,2 )2),(10)
+6
+
+===== PAGE 7 =====
+
+HypeMARL for high-dimensional, parametric, and distributed systems
+Figure 2:Density control in a vacuum. Median and interquartile range of HypeMARL, MB-HypeMARL and MARL
+training end evaluation rewards.
+centered at the final target destination. Figure 2 reports the average local rewards during training and evaluation of the
+different MARL algorithms with respect to the number of training episodes. In particular, we display the median and
+interquartile range of 5 independent runs with 5 different seeds for a fair and robust comparison. We train the algorithms
+for a total of 500 episodes, exploring the action space with additive Gaussian noise, which linearly decays after the first
+25 warm-up interactions, on the actions predicted by the policy. Regarding the evaluations, we test the policy during
+training every 50 episodes, and we evaluate the optimal policy after training on 5 different combinations of initial
+positions µ0 and final destination µ=µ T . When considering MB-HypeMARL, to highlight the data efficiency with
+respect to model-free algorithms, we only report the training rewards collected when interacting with the environment,
+leaving out the interactions with the surrogate environment. In particular, after the first 25 episodes of warm-up,
+MB-HypeMARL performs 10 episodes of interaction with the surrogate environment for every episode of interaction
+with the real environment. Both HypeMARL and MB-HypeMARL outperform MARL in terms of expected cumulative
+reward during training and evaluation. In addition, while 500 environment interactions are required to optimally steer
+the system with HypeMARL, MB-HypeMARL is capable of learning effective policies with only 73 environment
+interactions.
+Figure 3, instead, displays three examples of controlled solutions at two different time instants, namely t= 0.0s and
+t= 0.5s , obtained after training HypeMARL, MB-HypeMARL, and MARL when dealing with three different random
+initial positions µ0 and target destinations µ=µ T . Although all algorithms are capable of suppressing the initial
+density around µ0, only HypeMARL and MB-HypeMARL are able to make it move around µT . The difficulties
+of MARL are intrinsic to the fully decentralized nature of the algorithm. Indeed, MARL policies have no way of
+differentiating states with similar values but located in different positions. As soon as the density is suppressed, all the
+local states show similar values (≈0 ) and, without any knowledge of their own position, the agents are not capable of
+making the distribution appear in the target location. Thanks to positional encoding, the local agents of HypeMARL are
+aware of their (relative) position with respect to the others and can effectively solve this challenging task. These results
+show the importance of developing coordination among agents even in decentralized settings.
+3.1.2 Density control in a fluid
+In this second test case, differently from the setting presented in the previous section, we consider a circular obstacle
+with radius 0.15 in the middle of the square (−1,1) 2, that is Ω = (−1,1) 2 \B 0.15(0,0) . Moreover, we include a
+parametric transport term in Equation (7), that is, we deal with the following system
+
+
+
+∂y
+∂t +∇ ·(−κ∇y+v(α)y) =uinΩ×(0, T]
+(−κ∇y+v(α)y)·n= 0on∂Ω×(0, T]
+y(x,0) =y 0(x;µ0)inΩ
+(11)
+where κ= 0.001 is the diffusion coefficient, n is the outward normal versor to the domain boundary, and u(x, t)∈
+[−5,5]⊂R is the distributed control. The advection v(x, t;α)models an underlying fluid flow representing, for
+instance, a wind or a water current. The fluid enters the domain from the bottom boundary Γin =∂Ω∩ {x2 =−1} ,
+7
+
+===== PAGE 8 =====
+
+HypeMARL for high-dimensional, parametric, and distributed systems
+No control
+State
+t= 0.0s
+µ0 = (−0.01,−0.24)
+µT = (0.35,−0.64)
+t= 0.5s
+ t= 0.0s
+µ0 = (−0.43,0.28)
+µT = (0.34,0.02)
+t= 0.5s
+ t= 0.0s
+µ0 = (−0.38,0.53)
+µT = (0.67,−0.21)
+t= 0.5s
+HypeMARL
+Action State
+MB-HypeMARL
+Action State
+MARL
+Action State
+Figure 3:Density control in a vacuum. Uncontrolled states (first row), controlled states and optimal actions obtained
+with HypeMARL (second and third row), MB-HypeMARL (fourth and fifth row) and MARL (sixth and seventh row)
+over time in three different random parametric settings.
+8
+
+===== PAGE 9 =====
+
+HypeMARL for high-dimensional, parametric, and distributed systems
+Figure 4:Density control in a fluid. Median and interquartile range of HypeMARL, MB-HypeMARL and MARL
+training end evaluation rewards.
+and moves the density upwards according to the steady Navier-Stokes equations
+
+
+
+−ν∆v+ (v· ∇)v+∇p=0inΩ
+∇ ·v= 0inΩ
+v=0onΓ obs
+v=v in(α)onΓ in
+v·n= 0onΓ walls
+(ν∇v−p)n·t= 0onΓ walls
+(ν∇v−p)n=0onΓ out,
+(12)
+where ν= 0.1 is the kinematic viscosity, p(x, t)∈R is the pressure field, t is the tangential versor to the boundary
+∂Ω, Γout =∂Ω∩ {x2 = 1}, Γwall =∂Ω∩ {x1 =±1} , and Γobs denotes the obstacle boundary. The inflow Dirichlet
+boundary datum is defined as
+vin = [(x1 + 1)(x1 −1) sin(α),cos(α)] ⊤ ,
+where the angle of attack α∈[−1,1]rad is regarded as an additional system parameter, that is µ= [µ T,1 , µT,2 , α],
+while the parabolic profile(x 1 + 1)(1−x 1)avoids singularities at the domain corners.
+To solve the full-order model of Equations (11) and (12) through the finite element method, we utilize a spatial
+discretization of the domain, resulting in state and control dimensions Ny =N u = 1638 , and a uniform time
+discretization of the interval [0, T]with ∆t= 0.1s and final time T= 1s . Similarly to the test case detailed in the
+previous section, the goal is to move the density from a random initial position µ0 = [µ0,1, µ0,2]∈[−0.75,−0.25]×
+[−0.75,0.75] towards the parametric final destination µT = [µT,1 , µT,2 ]∈[0.25,0.75]×[−0.75,0.75] , maximizing
+the local rewards defined in Equation (9).
+Figure 4 shows the median and interquartile range of training and evaluation rewards obtained with 5 independent
+runs with 5 different seeds. Similarly to the previous test case, HypeMARL and MB-HypeMARL outperform MARL
+with remarkably higher rewards. Indeed, as visible in Figure 5 showing three examples of controlled solutions over
+time, all control methods are able to suppress the initial density. However, only HypeMARL and MB-HypeMARL are
+capable of controlling the source term to make the density appear at the final desired position. Notice that, due to the
+presence of the underlying fluid, after moving the density to the target location, the agents have to maintain the density
+in place, counterbalancing the parametric transport effect. Thanks to an accurate deep learning-based surrogate model
+approximating the local dynamics, which represents a very limited additional complexity to the algorithm, it is possible
+to limit the real environment interactions with the model-based algorithm MB-HypeMARL, thus resulting in a faster
+training procedure, with minimal deterioration of the control performance.
+3.2 Flow control
+The second class of applications considered deals with the control of a flow around an object exploiting different
+actuation strategies. In particular, the first setting considers vertical jets, which blow and inject fluid on the top and
+bottom sides of the object to maximize (minimize) the pressure below (above) the obstacle. In the second scenario, the
+controller actively changes the obstacle’s shape to minimize the pressure at the front of the obstacle.
+9
+
+===== PAGE 10 =====
+
+HypeMARL for high-dimensional, parametric, and distributed systems
+No control
+State
+t= 0.0s
+µ0 = (−0.55,−0.48)
+µT = (0.29,0.59)
+α=−0.91rad
+t= 0.5s
+ t= 0.0s
+µ0 = (−0.40,0.51)
+µT = (0.54,−0.17)
+α= 0.08rad
+t= 0.5s
+ t= 0.0s
+µ0 = (−0.38,−0.14)
+µT = (0.53,0.16)
+α=−0.69rad
+t= 0.5s
+HypeMARL
+Action State
+MB-HypeMARL
+Action State
+MARL
+Action State
+Figure 5:Density control in a fluid. Uncontrolled states (first row), controlled states and optimal actions obtained with
+HypeMARL (second and third row), MB-HypeMARL (fourth and fifth row) and MARL (sixth and seventh row) over
+time in three different random parametric settings.
+10
+
+===== PAGE 11 =====
+
+HypeMARL for high-dimensional, parametric, and distributed systems
+3.2.1 Flow control with vertical jets
+In this section we test the MARL algorithms to steer an incompressible fluid flow around an object. We consider
+a rectangular channel Ω = (0,10)×(0,2)\Ω obs with an inner obstacle consisting of the union of a rectangle and
+two semicircles, that is, Ωobs = Ωl ∪Ω c ∪Ω r where Ωl =B 0.25(0.75,1.00) , Ωc = [0.75,1.25]×[0.75,1.25] and
+Ωr =B 0.25(1.25,1.00) . The fluid dynamics in terms of velocity v(x, t)∈R2 and pressure p(x, t)∈R is described by
+the unsteady Navier-Stokes equations
+
+
+
+∂v
+∂t −ν∆v+ (v· ∇)v+∇p=0inΩ×(0, T]
+∇ ·v= 0inΩ×(0, T]
+v=0onΓ l ∪Γ r
+v=unonΓ c
+v=v in(α)onΓ in
+v·n= 0onΓ walls
+(ν∇v−p)n·t= 0onΓ walls
+(ν∇v−p)n=0onΓ out
+v(x,0) =0inΩ,
+(13)
+where ν= 0.01 is the kinematic viscosity, n and t are the normal and tangential versors to the domain boundary,
+Γin =∂Ω∩ {x1 = 0} is the inflow boundary, Γout =∂Ω∩ {x1 = 10} is the outflow boundary, Γwall =∂Ω∩({x 2 =
+0}∪{x 2 = 2}) is the wall, Γc =∂Ω obs ∩{0.75< x1 <1.25} is the control boundary, whileΓl =∂Ω obs ∩{x1 ≤0.75}
+and Γr =∂Ω obs ∩ {x1 ≥1.25} are the rounded obstacle boundaries. To steer the fluid flow, we consider vertical jets on
+Γc with intensitiesu(x, t)∈[−1,1]⊂R. Moreover, we take into account an inflow velocity defined as
+vin(x, t;α) = [10x2(2−x 2) cos(α),10 sin(α)]⊤,
+where the angle of attack α∈[−1,1]rad is regarded as a system parameter, i.e. µ=α . The Reynolds number for this
+test case is equal to 1000. To solve Equation (13) with the finite element method, we discretize the spatial domain,
+resulting in a velocity and pressure dimension equal to, respectively,Nv = 100600 and Np = 12712. Moreover, we
+consider a uniform time grid in the interval[0, T]with time step∆t= 0.1s and final timeT= 5.5s.
+We now consider MARL, HypeMARL and MB-HypeMARL to control this challenging parametric and high-dimensional
+problem. Differently from the test cases detailed in Section 3.1, where the state and the actions are observed and
+predicted over the whole domain, the vertical jets are defined on the obstacle boundary Γc. Therefore, starting from the
+Ny = 74 local pressure values yi,t =p i,t =p(x i, t), with xi = (xi,1, xi,2)∈Γ c, MARL algorithms have to predict
+the optimal intensities of the corresponding Nu = 74 jets ui,t in the same locations in order to maximize the local
+rewards
+ri,t =r(p i,t, ui,t) =
+pi,t ifx i,2 = 0.75
+−pi,t ifx i,2 = 1.25 .
+Specifically, we aim at maximizing the pressure values at the bottom boundary of the obstacle, while minimizing the
+local pressure on top. Notice that the boundary control is applied after letting the uncontrolled system evolve for0.5s,
+and it is updated by the control methods every0.5s.
+The first row of Figure 6 reports the average local rewards in training and evaluation of the different competing
+algorithms with respect to the number of training episodes. The results show the median and interquartile range of 5
+independent runs with 5 different seeds for a fair and robust comparison. We train the algorithms for a total of 250
+episodes, exploring the action space with additive Gaussian random noise, which linearly decays after the first 25
+episodes of warm-up, on the actions predicted by the policy. To highlight the data efficiency of MB-HypeMARL, we
+only report the training rewards collected when interacting with the environment, while we leave out the interactions
+with the surrogate one. After the first 25 warm-up interactions with the real environment, MB-HypeMARL performs 10
+episodes of interaction with the surrogate environment for every episode of interaction with the real one. The agents
+are evaluated once every 25 training episodes. HypeMARL and MB-HypeMARL outperform classical decentralized
+MARL with remarkably higher rewards. Moreover, the model-based version is extremely data efficient and is capable
+of achieving effective control strategies with only 48 real environment interactions. Besides the evaluation rewards, the
+left panel in the second row of Figure 6 provides the evaluation lift of the different control strategies. It is important
+to note that, due to the high correlation of the selected reward with the lift force, HypeMARL and MB-HypeMARL
+provide higher lift values compared to the classical decentralized MARL. Moreover, the right panel in the second row
+of Figure 6 compares the reward of the different competing methods across different angles of attack in the range
+[−1,1]rad with respect to the uncontrolled setting. In particular, it is possible to further assess the effectiveness of the
+11
+
+===== PAGE 12 =====
+
+HypeMARL for high-dimensional, parametric, and distributed systems
+Figure 6:Flow control with vertical jets. First row: median and interquartile range of HypeMARL, MB-HypeMARL and
+MARL training end evaluation rewards. Second row: median and interquartile range of HypeMARL, MB-HypeMARL
+and MARL evaluation lifts (left) and reward obtained with HypeMARL, MB-HypeMARL, MARL and no control for
+different angles of attack (right).
+proposed algorithms in all the parametric scenarios considered and the unsatisfactory results of classical decentralized
+MARL.
+Figure 7 displays, instead, three examples of controlled solutions obtained with the different approaches for as many
+random angles of attack µ=α . Specifically, each subfigure shows the vertical jets with the velocity streamlines around
+the obstacle (top left), the pressure around the obstacle (top right), and the flow velocity (bottom).
+3.2.2 Flow control with shape morphing
+This last test case aims at controlling the flow around an object by morphing the front shape of the object itself. Similarly
+to the previous test case, we consider a fluid flow in the domain Ω(d) = (0,10)×(0,2)\Ω obs(d). Starting from
+the shape introduced in the previous section, the obstacle Ωobs(d) = Ωl(d)∪Ω c ∪Ω r can now modify the round left
+boundary Γl(d) =∂Ω obs(d)∩ {x1 ≤0.75} according to a deformation field d(x, t) =d(x, t)nref, with intensity
+d(x, t)∈[−0.1,0.1] and direction nref, that is the normal versor to the initial boundary with no deformation. The flow
+dynamics is modeled by the unsteady Navier-Stokes equations
+
+
+
+∂v
+∂t −ν∆v+ (v· ∇)v+∇p=0inΩ(d)×(0, T]
+∇ ·v= 0inΩ(d)×(0, T]
+v=0onΓ c ∪Γ r
+v=un ref onΓ l(d)
+v=v in(α)onΓ in
+v·n= 0onΓ walls
+(ν∇v−p)n·t= 0onΓ walls
+(ν∇v−p)n=0onΓ out
+v(x,0) =0inΩ(d),
+(14)
+with ν= 0.01 the kinematic viscosity, and u(x, t)∈[−0.01,0.01] the incremental deformation. Notice that, by
+discretizing the time interval [0, T]with a uniform grid t= 1, ..., Tmax, we have d(x, τ) =Pτ
+t=1 u(x, t)for every
+τ= 1, ..., Tmax. After observing the local pressure values yi,t =p i,t at Ny = 37 points on Γl(d), the controllers are
+allowed to deform the front part of the obstacle every 0.5s by applying a deformation ui,t in as many boundary points
+12
+
+===== PAGE 13 =====
+
+HypeMARL for high-dimensional, parametric, and distributed systemsNo control
+α=−0.95rad
+t= 3.0s
+α=−0.81rad
+t= 4.0s
+α= 0.90rad
+t= 5.0s
+HypeMARL
+MB-HypeMARL
+MARL
+Figure 7:Flow control with vertical jets. Uncontrolled dynamics (first row), controlled dynamics obtained with
+HypeMARL (second row), MB-HypeMARL (third row) and MARL (fourth row) in three different random parametric
+settings. Every panel presents the vertical jets applied with the velocity streamlines around the obstacle (top left), the
+pressure around the obstacle (top right), and the flow velocity norm (bottom).
+(Nu = 37). In this setting, the goal is to minimize the local pressure in front of the obstacle, that is
+ri,t =r(p i,t, ui,t) =−p i,t .
+See the previous section for further details on domain boundaries, space-time discretization and inflow velocity.
+Similarly to the previous test case, the angle of attack α∈[−1,1]rad is regarded as a system parameter, i.e. µ=α , and
+the Reynolds number ranges from900to1100, according to the obstacle deformation.
+The first row of Figure 8 presents the median and interquartile range of training and evaluation rewards obtained with
+5 independent runs with 5 different seeds. HypeMARL and MB-HypeMARL agents outperform MARL with higher
+training and evaluation rewards, and thus more effective morphing strategies. Moreover, as visible in the left panel in
+the second row of Figure 8, despite the simplicity of the reward function, HypeMARL and MB-HypeMARL indirectly
+allow for smaller drag values across different parametric settings with respect to classical decentralized MARL. The
+right panel in the second row of Figure 8 shows the rewards of the different competing models for different angles of
+attack in the range[−1,1]rad, along with the ones in the uncontrolled setting.
+Figure 9 shows three examples of shape morphing when facing as many values of the angle of attack, i.e. α=
+{−0.5,0.0,0.5}rad . Specifically, it is possible to assess that HypeMARL and MB-HypeMARL are able to learn
+non-trivial narrow front shapes, allowing for local pressure minimization. Moreover, the resulting shapes clearly exploit
+13
+
+===== PAGE 14 =====
+
+HypeMARL for high-dimensional, parametric, and distributed systems
+Figure 8:Flow control with shape morphing. First row: median and interquartile range of HypeMARL, MB-
+HypeMARL and MARL training end evaluation rewards. Second row: median and interquartile range of HypeMARL,
+MB-HypeMARL and MARL evaluation drags (left) and reward obtained with HypeMARL, MB-HypeMARL, MARL
+and no control for different angles of attack (right).
+the parametric knowledge to adapt the front orientation with respect to the different angles of attack α. Conversely,
+MARL is only capable of finding a trivial shape corresponding to the maximum displacement allowed, without any
+adaptation corresponding to the different parameter values. Similarly to the previous test cases, MB-HypeMARL is
+again capable of reducing the number of real environment interactions, with a minimal performance deterioration with
+respect to HypeMARL.
+While the results obtained in this very challenging example by HypeMARL and MB-HypeMARL are interesting and
+promising, as they show a collective and coordinated behavior of the agents, it is worth highlighting that the shapes
+found are not the optimal shapes usually obtained in the context of shape optimization in fluid flows. Improving
+the shape smoothness requires higher degrees of freedom in the boundary displacements. In our experiments, we
+only consider radial displacements of the front part of the object, limiting the shapes that can be obtained. Moreover,
+feasibility constraints should be taken into account to guarantee physical and geometrical admissibility of the resulting
+shape. In addition, the obstacle aerodynamics could be enhanced by maximizing global reward metrics, such as
+promoting drag reduction or penalizing non-smooth shapes. However, the maximization of global reward functions in
+decentralized settings is extremely challenging, and it will be the subject of future works, as highlighted in Section 4.
+4 Conclusions
+In this work, we propose a novel decentralized MARL approach, named HypeMARL, that allows for solving challenging
+high-dimensional, parametric, and distributed control problems. HypeMARL relies on(i)sinusoidal positional encoding
+of the agents’ relative position to enhance spatial awareness and coordination among the agents, and(ii)hypernetworks
+to effectively parametrize the control policies as functions of system parameters and positional information. Moreover,
+we propose a model-based version of the algorithm, named MB-HypeMARL, allowing for a significant reduction
+of interactions with the real environment (by a factor ∼10 ) thanks to a cheap deep learning-based surrogate model
+approximating local dynamics.
+In numerical experiments dealing with two challenging classes of high-dimensional control problems, namely density
+and flow control, we show that both HypeMARL and MB-HypeMARL can effectively solve problems that the state-
+of-the-art decentralized MARL approach cannot. Specifically, our results demonstrate that hypernetworks combined
+with the sinusoidal embedding of the agents’ (relative) position allow for strategic coordination strategies among the
+agents by only relying on local state and reward information. The model-based algorithm MB-HypeMARL is especially
+appealing for applications where only a limited amount of data is available, as the agents rely on surrogate models
+14
+
+===== PAGE 15 =====
+
+HypeMARL for high-dimensional, parametric, and distributed systemsNo control
+α=−0.5rad
+t= 4.0s
+α= 0.0rad
+t= 4.0s
+α= 0.5rad
+t= 4.0s
+HypeMARL
+MB-HypeMARL
+MARL
+Figure 9:Flow control with shape morphing. Uncontrolled dynamics (first row), controlled dynamics obtained with
+HypeMARL (second row), MB-HypeMARL (third row) and MARL (fourth row) in three different parametric settings.
+Every panel presents the deformed obstacle shape with the velocity streamlines around the obstacle (top left), the
+pressure around the obstacle (top right), and the flow velocity norm (bottom).
+15
+
+===== PAGE 16 =====
+
+HypeMARL for high-dimensional, parametric, and distributed systems
+approximating the local dynamics to reduce the need for real systems interactions. In this work, local surrogate models
+are modeled through shallow neural networks and show impressive accuracy even if trained with limited data, opening
+new doors towards scaling reinforcement learning to complex real-world engineering systems.
+In particular, the control of density functions is extremely relevant in several scientific fields. For example, a density
+function can represent a robot swarm and its optimal control can have impact in security, survey, monitoring, and
+surveillance applications [46]. Density functions can also model wildlife, or traffic flows. In all these cases, developing
+(decentralized) algorithms that can achieve coordination among the agents and collective behavior while scaling to
+large number of agents, such as the ones learned by HypeMARL and MB-HypeMARL, is essential for solving complex
+problems. While the high-dimensionality of the states is not a limiting factor for state-of-the-art deep reinforcement
+learning algorithms, dealing with large actions spaces still remains an open challenge.
+The ability to manipulate a flow field actively is one the most import technological challenges of the present and past
+decades. Flow control involves transition delay, separation postponement, lift enhancement, turbulence augmentation,
+noise suppression and drag reduction [47]. Drag reduction is especially critical for reducing fuel consumption of land,
+air, and sea vehicles and emissions. However, actuation strategies such as jets, or morphing structures typically require
+coordination among a large number of distributed actuators and, consequently, control algorithms capable of dealing
+with high-dimensional control problems. In addition, collecting data from real-world flow experiments, for example
+in a wind tunnel, is extremely costly and tedious. At the same time, full-order models capable of simulating fluid
+flows or fluid-structure interactions are computationally expensive. Data-efficient approaches as HypeMARL and
+MB-HypeMARL can lay the foundations towards the next generation of energy-efficient vehicles through active flow
+control.
+The underlying assumption of decentralized MARL approaches is that the maximization of the cumulative local rewards
+corresponds to the maximization of a global task-specific metric. Although it is feasible to design such reward functions
+for various problems, it is not always straightforward. Indeed, local rewards and global task-specific metrics may
+be conflicting incentives due to the effect of the agents’ interactions. Moreover, the credit assignment problem may
+arise whenever local rewards are uninformative about global performance. While HypeMARL and MB-HypeMARL
+prioritize collective behavior of the agents over immediate local payoff, the direct maximization of global reward
+functions will be the subject of future works. Another interesting future direction is the learning of local reward
+functions corresponding to global reward metrics from given expert demonstrations, in the direction of Inverse RL [48]
+and imitation learning [49].
+Acknowledgements
+NB and AM acknowledge the Project “Reduced Order Modeling and Deep Learning for the real- time approximation
+of PDEs (DREAM)” (Starting Grant No. FIS00003154), funded by the Italian Science Fund (FIS) - Ministero
+dell’Università e della Ricerca. AM also acknowledges the project “Dipartimento di Eccellenza” 2023-2027 funded by
+MUR and the project FAIR (Future Artificial Intelligence Research), funded by the NextGenerationEU program within
+the PNRR-PE-AI scheme (M4C2, Investment 1.3, Line on Artificial Intelligence).
+References
+[1] Jan H van Schuppen, Olivier Boutin, Pia L Kempker, Jan Komenda, Tomáš Masopust, Nicola Pambakian,
+and André CM Ran. Control of distributed systems: Tutorial and overview.European Journal of Control,
+17(5-6):579–602, 2011.
+[2] Lucian Bu¸ soniu, Robert Babuška, and Bart De Schutter. Multi-agent reinforcement learning: An overview.
+Innovations in multi-agent systems and applications-1, pages 183–221, 2010.
+[3] Richard S Sutton and Andrew G Barto.Reinforcement learning: An introduction. MIT press, 2018.
+[4] Richard S Sutton, David McAllester, Satinder Singh, and Yishay Mansour. Policy gradient methods for re-
+inforcement learning with function approximation.Advances in neural information processing systems, 12,
+1999.
+[5] James Orr and Ayan Dutta. Multi-agent deep reinforcement learning for multi-robot applications: A survey.
+Sensors, 23(7):3625, 2023.
+[6] Maximilian Hüttenrauch, Adrian Šoši´c, and Gerhard Neumann. Deep reinforcement learning for swarm systems.
+Journal of Machine Learning Research, 20(54):1–31, 2019.
+[7] Haixia Peng and Xuemin Shen. Multi-agent reinforcement learning based resource management in mec-and
+uav-assisted vehicular networks.IEEE Journal on Selected Areas in Communications, 39(1):131–141, 2020.
+16
+
+===== PAGE 17 =====
+
+HypeMARL for high-dimensional, parametric, and distributed systems
+[8] Michael L Littman. Markov games as a framework for multi-agent reinforcement learning. InMachine learning
+proceedings 1994, pages 157–163. Elsevier, 1994.
+[9] Ardi Tampuu, Tambet Matiisen, Dorian Kodelja, Ilya Kuzovkin, Kristjan Korjus, Juhan Aru, Jaan Aru, and Raul
+Vicente. Multiagent cooperation and competition with deep reinforcement learning.PloS one, 12(4):e0172395,
+2017.
+[10] Ana LC Bazzan. Opportunities for multiagent systems and multiagent reinforcement learning in traffic control.
+Autonomous Agents and Multi-Agent Systems, 18:342–375, 2009.
+[11] Marco A Wiering et al. Multi-agent reinforcement learning for traffic light control. InMachine Learning:
+Proceedings of the Seventeenth International Conference (ICML’2000), pages 1151–1158, 2000.
+[12] Hado Van Hasselt, Arthur Guez, and David Silver. Deep reinforcement learning with double q-learning. In
+Proceedings of the AAAI conference on artificial intelligence, volume 30, 2016.
+[13] Colin Vignon, Jean Rabault, Joel Vasanth, Francisco Alcántara-Ávila, Mikael Mortensen, and Ricardo Vinuesa.
+Effective control of two-dimensional rayleigh–bénard convection: Invariant multi-agent reinforcement learning is
+all you need.Physics of Fluids, 35(6), 2023.
+[14] Pol Suárez, Francisco Alcántara-Ávila, Arnau Miró, Jean Rabault, Bernat Font, Oriol Lehmkuhl, and Ricardo
+Vinuesa. Active flow control for drag reduction through multi-agent reinforcement learning on a turbulent cylinder
+at r e d= 3900.Flow, Turbulence and Combustion, pages 1–25, 2025.
+[15] Ryan Lowe, Yi I Wu, Aviv Tamar, Jean Harb, OpenAI Pieter Abbeel, and Igor Mordatch. Multi-agent actor-critic
+for mixed cooperative-competitive environments.Advances in neural information processing systems, 30, 2017.
+[16] Chao Yu, Akash Velu, Eugene Vinitsky, Jiaxuan Gao, Yu Wang, Alexandre Bayen, and Yi Wu. The surprising
+effectiveness of ppo in cooperative multi-agent games.Advances in neural information processing systems,
+35:24611–24624, 2022.
+[17] Jakub Grudzien Kuba, Ruiqing Chen, Muning Wen, Ying Wen, Fanglei Sun, Jun Wang, and Yaodong Yang. Trust
+region policy optimisation in multi-agent reinforcement learning.arXiv preprint arXiv:2109.11251, 2021.
+[18] Shariq Iqbal and Fei Sha. Actor-attention-critic for multi-agent reinforcement learning. InInternational conference
+on machine learning, pages 2961–2970. PMLR, 2019.
+[19] Peter Sunehag, Guy Lever, Audrunas Gruslys, Wojciech Marian Czarnecki, Vinicius Zambaldi, Max Jaderberg,
+Marc Lanctot, Nicolas Sonnerat, Joel Z Leibo, Karl Tuyls, et al. Value-decomposition networks for cooperative
+multi-agent learning.arXiv preprint arXiv:1706.05296, 2017.
+[20] Tabish Rashid, Mikayel Samvelyan, Christian Schroeder De Witt, Gregory Farquhar, Jakob Foerster, and Shimon
+Whiteson. Monotonic value function factorisation for deep multi-agent reinforcement learning.Journal of
+Machine Learning Research, 21(178):1–51, 2020.
+[21] Christian Schroeder de Witt, Bei Peng, Pierre-Alexandre Kamienny, Philip Torr, Wendelin Böhmer, and Shimon
+Whiteson. Deep multi-agent reinforcement learning for decentralized continuous cooperative control.arXiv
+preprint arXiv:2003.06709, 19, 2020.
+[22] Kyunghwan Son, Daewoo Kim, Wan Ju Kang, David Earl Hostallero, and Yung Yi. Qtran: Learning to factorize
+with transformation for cooperative multi-agent reinforcement learning. InInternational conference on machine
+learning, pages 5887–5896. PMLR, 2019.
+[23] Yaodong Yang, Rui Luo, Minne Li, Ming Zhou, Weinan Zhang, and Jun Wang. Mean field multi-agent reinforce-
+ment learning. InInternational conference on machine learning, pages 5571–5580. PMLR, 2018.
+[24] Ermo Wei and Sean Luke. Lenient learning in independent-learner stochastic cooperative games.Journal of
+Machine Learning Research, 17(84):1–42, 2016.
+[25] Christian Schroeder De Witt, Tarun Gupta, Denys Makoviichuk, Viktor Makoviychuk, Philip HS Torr, Mingfei
+Sun, and Shimon Whiteson. Is independent learning all you need in the starcraft multi-agent challenge?arXiv
+preprint arXiv:2011.09533, 2020.
+[26] Ming Tan. Multi-agent reinforcement learning: Independent vs. cooperative agents. InProceedings of the tenth
+international conference on machine learning, pages 330–337, 1993.
+[27] Jakob Foerster, Gregory Farquhar, Triantafyllos Afouras, Nantas Nardelli, and Shimon Whiteson. Counterfactual
+multi-agent policy gradients. InProceedings of the AAAI conference on artificial intelligence, volume 32, 2018.
+[28] Laetitia Matignon, Guillaume J Laurent, and Nadine Le Fort-Piat. Independent reinforcement learners in
+cooperative markov games: a survey regarding coordination problems.The Knowledge Engineering Review,
+27(1):1–31, 2012.
+17
+
+===== PAGE 18 =====
+
+HypeMARL for high-dimensional, parametric, and distributed systems
+[29] Jayesh K Gupta, Maxim Egorov, and Mykel Kochenderfer. Cooperative multi-agent control using deep reinforce-
+ment learning. InAutonomous Agents and Multiagent Systems: AAMAS 2017 Workshops, Best Papers, São Paulo,
+Brazil, May 8-12, 2017, Revised Selected Papers 16, pages 66–83. Springer, 2017.
+[30] Stefano V Albrecht, Filippos Christianos, and Lukas Schäfer.Multi-agent reinforcement learning: Foundations
+and modern approaches. MIT Press, 2024.
+[31] David Ha, Andrew Dai, and Quoc V . Le. Hypernetworks, 2016.
+[32] Vinod Kumar Chauhan, Jiandong Zhou, Ping Lu, Soheila Molaei, and David A Clifton. A brief review of
+hypernetworks in deep learning.arXiv preprint arXiv:2306.06955, 2023.
+[33] Elad Sarafian, Shai Keynan, and Sarit Kraus. Recomposing the reinforcement learning building blocks with
+hypernetworks. InInternational Conference on Machine Learning, pages 9301–9312. PMLR, 2021.
+[34] Jacob Beck, Matthew Thomas Jackson, Risto Vuorio, and Shimon Whiteson. Hypernetworks in meta-
+reinforcement learning. InConference on Robot Learning, pages 1478–1487. PMLR, 2023.
+[35] Sahand Rezaei-Shoshtari, Charlotte Morissette, Francois R Hogan, Gregory Dudek, and David Meger. Hyper-
+networks for zero-shot transfer in reinforcement learning. InProceedings of the AAAI Conference on Artificial
+Intelligence, volume 37, pages 9579–9587, 2023.
+[36] Yizhou Huang, Kevin Xie, Homanga Bharadhwaj, and Florian Shkurti. Continual model-based reinforcement
+learning with hypernetworks. In2021 IEEE International Conference on Robotics and Automation (ICRA), pages
+799–805. IEEE, 2021.
+[37] Nicolò Botteghi, Stefania Fresca, Mengwu Guo, and Andrea Manzoni. Hyperl: Parameter-informed reinforcement
+learning for parametric pdes, 2025.
+[38] Filippos Christianos, Georgios Papoudakis, Muhammad A Rahman, and Stefano V Albrecht. Scaling multi-agent
+reinforcement learning with selective parameter sharing. InInternational Conference on Machine Learning, pages
+1989–1998. PMLR, 2021.
+[39] Justin K Terry, Nathaniel Grammel, Sanghyun Son, Benjamin Black, and Aakriti Agrawal. Revisiting parameter
+sharing in multi-agent deep reinforcement learning.arXiv preprint arXiv:2005.13625, 2020.
+[40] Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N Gomez, Łukasz Kaiser, and
+Illia Polosukhin. Attention is all you need.Advances in neural information processing systems, 30, 2017.
+[41] Nicolò Botteghi and Urban Fasel. Parametric pde control with deep reinforcement learning and differentiable
+l0-sparse polynomial policies.arXiv preprint arXiv:2403.15267, 2024.
+[42] Jonas Gehring, Michael Auli, David Grangier, Denis Yarats, and Yann N Dauphin. Convolutional sequence to
+sequence learning. InInternational conference on machine learning, pages 1243–1252. PMLR, 2017.
+[43] Scott Fujimoto, Herke Hoof, and David Meger. Addressing function approximation error in actor-critic methods.
+InInternational conference on machine learning, pages 1587–1596. PMLR, 2018.
+[44] Sebastian Peitz, Jan Stenner, Vikas Chidananda, Oliver Wallscheid, Steven L Brunton, and Kunihiko Taira.
+Distributed control of partial differential equations using convolutional reinforcement learning.arXiv preprint
+arXiv:2301.10737, 2023.
+[45] Matteo Tomasetto, Francesco Braghin, and Andrea Manzoni. Latent feedback control of distributed systems in
+multiple scenarios through deep learning-based reduced order models.Computer Methods in Applied Mechanics
+and Engineering, 442:118030, 2025.
+[46] Anam Tahir, Jari Böling, Mohammad-Hashem Haghbayan, Hannu T Toivonen, and Juha Plosila. Swarms of
+unmanned aerial vehicles—a survey.Journal of Industrial Information Integration, 16:100106, 2019.
+[47] Mohamed Gad-el Hak. Flow control: The future.Journal of aircraft, 38(3):402–418, 2001.
+[48] Andrew Y Ng, Stuart Russell, et al. Algorithms for inverse reinforcement learning. InIcml, volume 1, page 2,
+2000.
+[49] Ahmed Hussein, Mohamed Medhat Gaber, Eyad Elyan, and Chrisina Jayne. Imitation learning: A survey of
+learning methods.ACM Computing Surveys (CSUR), 50(2):1–35, 2017.
+[50] Christopher JCH Watkins and Peter Dayan. Q-learning.Machine learning, 8:279–292, 1992.
+[51] Satinder Singh, Tommi Jaakkola, Michael L Littman, and Csaba Szepesvári. Convergence results for single-step
+on-policy reinforcement-learning algorithms.Machine learning, 38:287–308, 2000.
+[52] Kai Arulkumaran, Marc Peter Deisenroth, Miles Brundage, and Anil Anthony Bharath. Deep reinforcement
+learning: A brief survey.IEEE Signal Processing Magazine, 34(6):26–38, 2017.
+18
+
+===== PAGE 19 =====
+
+HypeMARL for high-dimensional, parametric, and distributed systems
+[53] Yuxi Li. Deep reinforcement learning: An overview.arXiv preprint arXiv:1701.07274, 2017.
+[54] Vincent François-Lavet, Peter Henderson, Riashat Islam, Marc G Bellemare, Joelle Pineau, et al. An introduction
+to deep reinforcement learning.Foundations and Trends® in Machine Learning, 11(3-4):219–354, 2018.
+[55] Ronald J Williams. Simple statistical gradient-following algorithms for connectionist reinforcement learning.
+Machine learning, 8:229–256, 1992.
+[56] David Silver, Guy Lever, Nicolas Heess, Thomas Degris, Daan Wierstra, and Martin Riedmiller. Deterministic
+policy gradient algorithms. InInternational conference on machine learning, pages 387–395. Pmlr, 2014.
+[57] John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. Proximal policy optimization
+algorithms.arXiv preprint arXiv:1707.06347, 2017.
+[58] Timothy P Lillicrap, Jonathan J Hunt, Alexander Pritzel, Nicolas Heess, Tom Erez, Yuval Tassa, David Silver, and
+Daan Wierstra. Continuous control with deep reinforcement learning.arXiv preprint arXiv:1509.02971, 2015.
+[59] Scott Fujimoto, Wei-Di Chang, Edward Smith, Shixiang Shane Gu, Doina Precup, and David Meger. For sale:
+State-action representation learning for deep reinforcement learning.Advances in neural information processing
+systems, 36:61573–61624, 2023.
+A Reinforcement learning
+Reinforcement learning(RL) is a branch of machine learning concerned with howagents, namely the controllers of
+the distributed system, should takeactions, namely select control inputs, in an environment in order to maximize their
+cumulative reward [3]. Unlike supervised learning, where algorithms learn from a fixed dataset of labeled input-output
+pairs, RL agents learn from trial and error. An agent improves its behavior over time thanks to the experience gained
+while exploring the environment with different actions and receiving feedback signals in the form of rewards. Differently
+from unsupervised learning where no feedback is provided, the reward feedback is crucial to discriminate actions and to
+guide agent learning. Since the agent does not initially know which actions will yield the highest reward, it must explore
+different strategies to improve is behavior, balancing the trade-off between exploiting known high reward actions
+and exploring new, potentially even higher reward actions. This framework is suitable for a wide range of sequential
+decision-making problems, such as game playing, robotic control, autonomous driving, and resource management.
+Formally, RL problems are often modeled using Markov Decision Processes (MDPs), which provide a mathematical
+framework for modeling decision-making in situations where outcomes are partly random and partly under the control
+of the agent.
+Definition A.1 An MDP is defined by a tuple (Y,U, F, R), where Y and U denote the state and action spaces,
+respectively, F:Y × Y × U 7→[0,1]indicates the transition probability for any state y, y′ ∈ Yand u∈ U, and
+R:Y × U 7→Rindicates the reward function that determines the instantaneous reward the agent receives for each
+action taken in a given state.
+For a given time step k, the agent observes the state yk and takes action uk. As a result, the environment changes its
+state to some yk+1 according to the transition probability F. Additionally, the agent receives the reward rk according
+to the reward function R. It is worth mentioning that for deterministic systems, the transition probability function is
+replaced by the transition function ¯F:Y × U 7→ Y.
+The agent’s behavior is defined by itspolicy π, namely the set of rules that the agent exploits to select a specific action
+in a given state. The policy may be either stochastic π:R Ny ×R Nu →[0,1] or deterministic π:R Ny →R Nu, where
+Ny and Nu indicate the dimensions of the state and the action space, respectively. The agent’s goal is to find the optimal
+policy, i.e. the policy that maximizes the total expected cumulative reward from every statey:
+J(y) =E π
+" HX
+k=0
+γkrk|Y0 =y
+#
+,(15)
+where γ∈[0,1) is the discount factor and H is the horizon over which actions are taken that may be either finite or
+infinite. However, maximizing the long-term behavior while only receiving immediate reward is extremely challenging.
+RL algorithms can be classified based on the strategy employed to find the optimal policy:(i) value-based methods,
+(ii) policy-based methods, and(iii) actor-critic methods. Value-based methods look for an estimate of the state-action
+value function Q(y,u) :R Ny ×R Nu →R associated with a policy π. The state-action value function gives the
+expected return obtained when following the policy π over the whole horizon H, starting from a state y. The optimal
+policy is derived by taking the greedy action with respect to the value function estimate. Examples of value-based
+19
+
+===== PAGE 20 =====
+
+HypeMARL for high-dimensional, parametric, and distributed systems
+methods are Q-learning [50] and SARSA [51]. Policy-based methods, instead, consider a parametrization of the policy
+π(·;θ) =π θ(·) with respect to a set of parameters θ – which may be, for instance, neural network weights and biases
+in the context of deep reinforcement learning (DRL) [52, 53, 54] – and aim at optimizing those parameters through the
+policy gradient [4, 3], i.e. the gradient of the returnJwith respect to the policy parametersθ
+∇J(θ) =E u∼πθ(·),y∼ηπθ
+[Qπθ (y,u)∇logπ θ(u|y)],(16)
+where ∇logπ θ(u|y) is the score function of the policy and ηπθ is the state occupancy measure under the policy πθ.
+Examples of policy-based methods are REINFORCE [55] and deterministic policy gradient [56]. Eventually, actor-critic
+strategies combine the estimation of the value function with the direct optimization of the policy parameters. Examples
+are proximal policy optimization (PPO) [57] and deep deterministic policy gradient (DDPG) [58]. Another important
+distinction regarding RL algorithms is that between(i) model-freeand(ii) model-basedalgorithms. Model-free
+algorithms utilize the data collected from the interaction with the environment to directly learn the optimal policy and
+value function. Conversely, model-based RL exploits the data stream to build a surrogate model of the environment
+dynamics that serves as a computationally efficient proxy of the real environment to optimize the control strategy. While
+model-free RL is typically easier to implement and effective in high-dimensional and complex environments, it suffers
+from data inefficiency. Model-based RL addresses the problem of the sample inefficiency of model-free RL, but it is
+often subjected to model biases that degrade the policy performance when deployed on the real system.
+A.1 Multi-agent reinforcement learning
+When multiple decision-making agents interact with the environment to achieve certain goals, we can talk about a
+multi-agent system [30]. Multi-agent systems find applications in a large variety of domains such as robotics, distributed
+control, collaborative decision-support systems. Multi-agent reinforcement learning (MARL) algorithms learn optimal
+policies for a set of agents in a multi-agent system.
+MARL is formally modeled using the multi-agent extension of the MDP, namely the stochastic game [2].
+Definition A.2 A stochastic game is defined by a tuple (Y,U 1, . . . ,UN , F, R1, . . . , RN ), where Y denotes the state
+space, Ui with i= 1, . . . , Nare the actions spaces of the individual agents, N is the number of agents, U=
+U1 × U2 × ··· × UN is the joint action space, F:Y × Y × U 7→[0,1]indicates the transition probability, and
+Ri :Y × U 7→Rwithi= 1, . . . , Nindicates the reward functions of the agents.
+An important distinction among MARL algorithms lies in the assumptions made when training and after training
+the agents. In particular, we can identify three classes of methods, namely (i) centralized training and execution, (ii)
+decentralized training and execution, and (iii) centralized training and decentralized execution. In the centralized
+training and execution approach each agent share all observations with the others during the learning and deployment
+phase. Conversely, decentralized training and executions approaches assume no shared knowledge among the agents
+and each agent only relies on local information. Eventually, centralized training and decentralized execution methods
+combine the two aforementioned approaches, where the information are shared among the agents only during training
+and during execution only local information is used. Many other factors can be used to classify MARL algorithms, such
+as the number of agents, the assumptions about the rewards, or the type of solution to achieve. For more information,
+we refer the reader to [30].
+B Twin-delayed deep deterministic policy gradient
+In our numerical experiments, we utilize a model-free, online, off-policy, and actor-critic approach, namely twin-delayed
+deep deterministic policy gradient (TD3) [43]. TD3 learns a deterministic policy π(·), i.e., the actor, and the action-value
+function Q(·), i.e., the critic. The actor and the critic are parametrized by means of two DNNs of parameters θQ and
+θπ, respectively. We indicate the parametrized policy with π(yt;θπ) and the action-value function with Q(yt,u t;θQ).
+TD3 can handle continuous state and action spaces, making it a suitable candidate for controlling parametric PDEs
+using smooth control strategies.
+TD3 relies on a memory buffer D to store the interaction data (yt,u t, rt,y t+1) for all time steps t. Given a randomly-
+sampled batch of interaction tuples, we can update the parameters θQ of the action-value function Q(yt,u t;θQ)
+as:
+L(θQ) =E yt,ut,yt+1,rt∼D
+h
+f
+
+rk +γ ¯Q(yt+1,u t+1;θ ¯Q)−Q(y t,u t;θQ)
+i
+=E yt,ut,yt+1,rt∼D
+h
+f
+
+rt +γ ¯Q(yt+1,¯π(yt+1;θ ¯π) +ϵ;θ ¯Q)| {z }
+target value
+−Q(yt,u t;θQ)
+i
+, (17)
+20
+
+===== PAGE 21 =====
+
+HypeMARL for high-dimensional, parametric, and distributed systems
+where f is a arbitrary chosen loss function, e.g. mean-squared error, the so-called target networks ¯Q(yt,u t;θ ¯Q) and
+¯π(yt;θ ¯π) are copies of Q(yt,u t;θQ) and π(yt;θπ), respectively, with frozen parameters, i.e., they are not updated in
+the backpropagation step to improve the stability of the training. We indicate with ϵ∼clip(N(0, ¯σ),−c, c)the noise
+added to estimate the action value in the interval [−c, c]around the target action. Similarly to [59], we choose f to be
+the Huber loss.
+Instead of relying on the standard target-value update that TD3 uses, we opt for the modified objective proposed
+in [59] as shown to be improving the value function estimation. We still estimate to two independent action-value
+functions, namely Q1(yt,u t;θQ1 ) and Q2(yt,u t;θQ2 ), and two target action-value functions ¯Q1(yt,u t;θ ¯Q1 ) and
+¯Q2(yt,u t;θ ¯Q2 ), and computes the target value for regression as:
+rt +γclip
+
+min(Q1(·), Q2(·), Qmin, Qmax
+
+,
+| {z }
+target value
+(18)
+whereQ min and, Qmax are the minimum and maximum q-values estimates over a batch of samples.
+The action-value functions Q1(yt,u t;θQ1 ) and Q2(yt,u t;θQ2 ) are used to update the parameters of the deterministic
+policy π(yt;θπ) according to the deterministic policy gradient theorem [56]. In particular, the gradient of the critic
+guides the improvements of the actor and the policy parameters are updated to ascend the action-value function:
+L(θπ) =E yt∼D
+h
+− 1
+2∇utQ1(yt, π(yt;θπ);θQ1 )− 1
+2∇utQ2(yt, π(yt;θπ);θQ2 )
+i
+.(19)
+The target networks, parametrized by θ ¯Q1 , θ ¯Q2 , and θ¯π, respectively, are updated with a slower frequency than the
+actor and the critic according to:
+θ ¯Q1 =ρθ Q1 + (1−ρ)θ ¯Q1 ,
+θ ¯Q2 =ρθ Q2 + (1−ρ)θ ¯Q1 ,
+θ¯π=ρθ π + (1−ρ)θ ¯π,
+(20)
+whereρis a constant factor determining the speed of the updates of the target parameters.
+B.1 HypeRL TD3
+In [37], the TD3 algorithm was enhanced by the use of hypernetworks. Similarly to TD3, HypeRL TD3 estimates two
+action-value functions Q1(yt,u t;θQ1 ) and Q2(yt,u t;θQ2 ) and a policy π(yt;θπ) by means of neural networks. How-
+ever, the parameters of the main networks are now learned using three hypernetworks HQ1 (zt;θHQ1
+), HQ2 (zt;θHQ2
+),
+andH π(zt;θHπ ):
+θQ1 =H Q1 (zt;θhQ1
+),
+θQ2 =H Q2 (zt;θhQ2
+),
+θπ =H π(zt;θhπ ),
+(21)
+wherez t indicates the hypernetwork input. HypeRL TD3 replaces the policy with:
+θπ =H π(zt;θHπ ),
+ut =π(y t;θπ), (22)
+and analogously, the value function with:
+θQk =H Qk (zt;θHQk
+),
+qk,t =Q k(yt,u t;θQk ), (23)
+where qk,t is the predicted Q-value by the action-value function Qk(·,·) and k={1,2} . The hypernetwork parameters
+are jointly optimized with the main network parameters by simply allowing the gradient of the TD3 training objectives
+(see Equations (17) and (19)).
+C Comparison with RL
+C.1 Density control in a vacuum
+In Figure 10, we show a comparison of HypeMARL, MB-HypeMARL, MARL with a single-agent RL learning a single
+global policy mapping high-dimensional states to high-dimensional actions. Similarly to MARL-based methods, the
+single-agent RL relies on TD3. However, due to the high-dimensionality of the problem, the single-agent RL cannot
+learn a good policy and all the MARL agents drastically outperform single RL.
+21
+
+===== PAGE 22 =====
+
+HypeMARL for high-dimensional, parametric, and distributed systems
+Figure 10:Density control in a vacuum. Median and interquartile range of HypeMARL, MB-HypeMARL, MARL and
+single-agent RL training end evaluation rewards.
+Table 1: Agents
+HypeMARL MB-HypeMARL MARL RL
+RL algorithm TD3 TD3 TD3 TD3
+batch size32 32 32 32
+positional encodingd2048 2048− −
+positional encodingn1000 1000− −
+discountγ0.99 0.99 0.99 0.99
+learning rate actorπ1e−6 1e−6 3e−4 3e−4
+learning rate criticQ5e−5 5e−5 3e−4 3e−4
+num. hidden layer actorπ1 1 2 2
+num. hidden layer criticQ1 1 2 2
+hidden dim. actorπ256 256 256 256
+hidden dim. criticQ256 256 256 256
+learning rate forward dynamics ¯F−1e−4− −
+num. layer forward dynamics ¯F−1− −
+hidden dim. forward dynamics ¯F−256− −
+D Hyperparameters of the numerical experiments
+In this section, we report the value of the hyperparameters of our experiments. In particular, we list in Table 1 the
+hyperparameters of HypeMARL, MB-HypeMARL, MARL, and RL.
+22

@@ -80,3 +80,4 @@ if __name__ == '__main__':
     test = Runner(args)
     test.run()
 
+# python run.py --task tsc --agent adapt_comm --world cityflow --network cityflow_grid4x4 --prefix my_adapt_exp
