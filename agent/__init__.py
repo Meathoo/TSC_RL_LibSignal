@@ -12,6 +12,7 @@ from .presslight import PressLightAgent
 from .fixedtime import FixedTimeAgent
 from .mplight import MPLightAgent
 from .h2tsc_agent import H2TSCAgent
+from .hyperlight import HyperLightAgent
 
 try:
     from .adapt_comm_agent import ADAPTCommAgent

@@ -42,13 +42,14 @@ class HyperQNetwork(nn.Module):
     Local Q network whose weights are generated from agent metadata.
     """
 
-    def __init__(self, state_dim, action_dim, meta_dim, hidden_dims, hyper_hidden, dropout=0.0):
+    def __init__(self, state_dim, action_dim, meta_dim, hidden_dims, hyper_hidden, dropout=0.0, chunk_size=None):
         super().__init__()
         self.input_dim = state_dim + action_dim
         self.dims = [self.input_dim] + list(hidden_dims) + [1]
         self.layout = self._build_layout()
         self.param_dim = self.layout[-1][-1]
         self.hypernet = HyperNetwork(meta_dim, hyper_hidden, self.param_dim, dropout=dropout)
+        self.chunk_size = chunk_size
 
     def _build_layout(self):
         layout = []
@@ -60,19 +61,42 @@ class HyperQNetwork(nn.Module):
             offset += weight_numel + bias_numel
         return layout
 
-    def forward(self, state, action, meta):
-        # state/action/meta: [B, N, D]. Each node receives its own generated Q network.
+    def _forward_flat(self, x, meta):
         theta = self.hypernet(meta)
-        x = torch.cat([state, action], dim=-1)
 
         for layer_idx, (out_dim, in_dim, weight_start, bias_start, end) in enumerate(self.layout):
-            weight = theta[..., weight_start:bias_start].view(*theta.shape[:-1], out_dim, in_dim)
-            bias = theta[..., bias_start:end].view(*theta.shape[:-1], out_dim)
-            x = torch.einsum('bni,bnoi->bno', x, weight) + bias
+            weight = theta[..., weight_start:bias_start].view(theta.shape[0], out_dim, in_dim)
+            bias = theta[..., bias_start:end].view(theta.shape[0], out_dim)
+            x = torch.einsum('mi,moi->mo', x, weight) + bias
             if layer_idx < len(self.layout) - 1:
                 x = F.relu(x)
 
         return x
+
+    def forward(self, state, action, meta):
+        # state/action/meta: [B, N, D]. Each node receives its own generated Q network.
+        batch_size, n_agents, _ = state.shape
+        x = torch.cat([state, action], dim=-1)
+
+        if not self.chunk_size or self.chunk_size <= 0:
+            theta = self.hypernet(meta)
+
+            for layer_idx, (out_dim, in_dim, weight_start, bias_start, end) in enumerate(self.layout):
+                weight = theta[..., weight_start:bias_start].view(*theta.shape[:-1], out_dim, in_dim)
+                bias = theta[..., bias_start:end].view(*theta.shape[:-1], out_dim)
+                x = torch.einsum('bni,bnoi->bno', x, weight) + bias
+                if layer_idx < len(self.layout) - 1:
+                    x = F.relu(x)
+
+            return x
+
+        x_flat = x.reshape(batch_size * n_agents, -1)
+        meta_flat = meta.reshape(batch_size * n_agents, -1)
+        outputs = []
+        for start in range(0, x_flat.shape[0], int(self.chunk_size)):
+            end = min(start + int(self.chunk_size), x_flat.shape[0])
+            outputs.append(self._forward_flat(x_flat[start:end], meta_flat[start:end]))
+        return torch.cat(outputs, dim=0).view(batch_size, n_agents, -1)
 
 
 class HyperTwinCritic(nn.Module):
@@ -88,10 +112,27 @@ class HyperTwinCritic(nn.Module):
         hidden_dims=(256,),
         hyper_hidden=(256, 512),
         dropout=0.0,
+        chunk_size=None,
     ):
         super().__init__()
-        self.q1_net = HyperQNetwork(state_dim, action_dim, meta_dim, hidden_dims, hyper_hidden, dropout=dropout)
-        self.q2_net = HyperQNetwork(state_dim, action_dim, meta_dim, hidden_dims, hyper_hidden, dropout=dropout)
+        self.q1_net = HyperQNetwork(
+            state_dim,
+            action_dim,
+            meta_dim,
+            hidden_dims,
+            hyper_hidden,
+            dropout=dropout,
+            chunk_size=chunk_size,
+        )
+        self.q2_net = HyperQNetwork(
+            state_dim,
+            action_dim,
+            meta_dim,
+            hidden_dims,
+            hyper_hidden,
+            dropout=dropout,
+            chunk_size=chunk_size,
+        )
 
     def forward(self, state, action, meta, reduce=True):
         q1 = self.q1_net(state, action, meta)

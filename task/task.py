@@ -61,11 +61,17 @@ class TSCTask(BaseTask):
         :return: None
         '''
         try:
+            trained = False
             if Registry.mapping['model_mapping']['setting'].param['train_model']:
                 self.trainer.train()
                 self._save_training_hyperparameters()
+                trained = True
             if Registry.mapping['model_mapping']['setting'].param['test_model']:
-                self.trainer.test()
+                should_load_checkpoint = (
+                    trained
+                    or Registry.mapping['model_mapping']['setting'].param.get('load_model', False)
+                )
+                self.trainer.test(drop_load=not should_load_checkpoint)
         except RuntimeError as e:
             self._process_error(e)
             raise e

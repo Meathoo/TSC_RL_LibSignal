@@ -16,30 +16,30 @@ MODES = ["TRAIN", "TEST"]
 # ========================
 # Support both folders and direct *_DTL.log files.
 INPUT_PATHS = [
-    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_h2tsc/cityflow4x4/h2tsc_v6/logger",
-    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_h2tsc/cityflow4x4/h2tsc_v6_config2/logger",
-    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_h2tsc/cityflow4x4/h2tsc_v7/logger",
-    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_h2tsc/cityflow4x4/h2tsc_v7_config2/logger",
-    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_colight/cityflow4x4/test/logger",
-    "/DaRL/LibSignal/data/output_data/tsc/cityflow_h2tsc/cityflow7x28/h2tsc_v7_config2/logger",
-
+    "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight/cityflow7x28/hyperlight_exp/logger/2026_04_29-13_02_10_DTL.log",
+    "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight/cityflow7x28/hyperlight_cf2/logger/2026_04_30-11_08_07_DTL.log",
+    "/DaRL/LibSignal/data/output_data/tsc/cityflow_colight/cityflow_7x28/test/logger/from_remote.log",
+    "/DaRL/LibSignal/data/output_data/tsc/cityflow_colight/cityflow_7x28/test/logger/2026_04_08-20_18_16_DTL.log",
+    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight/cityflow4x4/hyperlight_exp/logger/2026_04_29-05_50_19_DTL.log",
+    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight/cityflow4x4/hyperlight_exp/logger/2026_04_30-09_13_14_DTL.log",
+    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_colight/cityflow4x4/test/logger/2026_04_23-19_39_43_DTL.log",
 ]
 
 # Optional: set custom labels for each input path.
 # Keep empty to use folder/file names automatically.
 DISPLAY_NAMES: List[str] = [
-    # "h2tsc",
-    # "h2tsc_v4",
-    # "h2tsc_v5",
-    # "h2tsc_v6",
-    # "h2tsc_v6_config2",
-    # "h2tsc_v7_mu",
-    "h2tsc_v7_config2",
-    # "colight",
+    "hyperlight_cf1",
+    "hyperlight_cf2",
+    "colight1",
+    "colight2",
 ]
 
 # Which modes to export in one run.
 MODES_TO_PLOT = ["TRAIN", "TEST"]
+
+# Moving Average Settings
+USE_MOVING_AVERAGE = True  # Set to True to enable moving average smoothing
+MOVING_AVERAGE_WINDOW = 5  # Window size for moving average (higher = smoother curve)
 
 # Output settings
 OUTPUT_DIR = "compare_outputs"
@@ -96,6 +96,31 @@ def metric_value(record: Record, metric: str) -> float:
     return float(getattr(record, metric))
 
 
+def apply_moving_average(values: List[float], window: int) -> List[float]:
+    """
+    Apply moving average smoothing to a list of values.
+    
+    Args:
+        values: Input values to smooth
+        window: Window size for moving average
+    
+    Returns:
+        Smoothed values (same length as input)
+    """
+    if window <= 1 or len(values) <= window:
+        return values
+    
+    smoothed = []
+    for i in range(len(values)):
+        # Center window around current index when possible
+        start_idx = max(0, i - window // 2)
+        end_idx = min(len(values), i + window // 2 + 1)
+        window_values = values[start_idx:end_idx]
+        smoothed.append(sum(window_values) / len(window_values))
+    
+    return smoothed
+
+
 def find_latest_dtl_log(folder: str) -> Optional[str]:
     pattern = os.path.join(folder, "**", "*_DTL.log")
     candidates = glob.glob(pattern, recursive=True)
@@ -118,6 +143,11 @@ def records_to_series(records: List[Record], mode: str, metric: str) -> Tuple[Li
     filtered.sort(key=lambda r: r.episode)
     episodes = [r.episode for r in filtered]
     values = [metric_value(r, metric) for r in filtered]
+    
+    # Apply moving average if enabled
+    if USE_MOVING_AVERAGE and len(values) > 1:
+        values = apply_moving_average(values, MOVING_AVERAGE_WINDOW)
+    
     return episodes, values
 
 
@@ -190,7 +220,11 @@ def plot_all_metrics(
     handles, labels = axes[0].get_legend_handles_labels()
     if handles:
         fig.legend(handles, labels, loc="upper center", ncol=max(1, len(labels)))
-    fig.suptitle(f"{mode} - all metrics comparison", fontsize=14)
+    
+    title = f"{mode} - all metrics comparison"
+    if USE_MOVING_AVERAGE:
+        title += f" (MA window={MOVING_AVERAGE_WINDOW})"
+    fig.suptitle(title, fontsize=14)
     fig.tight_layout(rect=[0, 0, 1, 0.94])
 
     os.makedirs(output_dir, exist_ok=True)

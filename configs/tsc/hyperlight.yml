@@ -1,0 +1,85 @@
+includes:
+  - configs/tsc/base.yml
+
+
+model:
+  name: hyperlight
+  train_model: True
+  test_model: True
+  load_model: False
+  graphic: True
+
+  phase: True
+  one_hot: True
+  state_features: ["lane_count", "lane_waiting_count"]
+  vehicle_max: 50
+
+  learning_rate: 0.00005
+  critic_lr: 0.0001
+  forward_lr: 0.0003
+  batch_size: 16
+  gamma: 0.99
+  tau: 0.003
+  grad_clip: 5.0
+
+  epsilon: 0.5
+  epsilon_decay: 0.99985
+  epsilon_min: 0.01
+
+  policy_delay: 6
+  reward_scale: 0.05
+  actor_warmup_steps: 5000
+  actor_entropy_coef: 0.003
+  target_policy_noise: 0.01
+  target_noise_clip: 0.05
+  td3_clip_target: True
+  huber_beta: 1.0
+
+  use_system_mu: True
+  pressure_balance_coef: 0.02
+  pressure_release_coef: 0.05
+
+  pe_dim: 32
+  pe_base: 1000.0
+  hyper_hidden: [128, 256]
+  hyper_dropout: 0.05
+
+  actor_hidden1: 64
+  actor_hidden2: 32
+  actor_chunk_size: 1024
+  critic_hidden: [128]
+  critic_hyper_hidden: [128, 256]
+  critic_chunk_size: 1024
+
+  model_based: True
+  surrogate_hidden: [128, 128]
+  surrogate_dropout: 0.05
+  surrogate_residual: True
+  surrogate_update_steps: 1
+  surrogate_warmup_steps: 5000
+  surrogate_rollout_horizon: 1
+  imagined_updates: 1
+  imagined_reward_mode: waiting_count
+  surrogate_huber_beta: 1.0
+  surrogate_state_clip: 2.0
+  surrogate_loss_coef: 0.1
+
+
+trainer:
+  learning_start: 2000
+  buffer_size: 20000
+  steps: 3600
+  test_steps: 3600
+  action_interval: 10
+  episodes: 200
+  update_model_rate: 2
+  update_target_rate: 2
+  test_when_train: True
+  test_interval: 5
+  early_stop_patience: 8
+  load_best_for_test: True
+
+
+logger:
+  save_rate: 20
+  attention: False

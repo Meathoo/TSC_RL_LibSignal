@@ -34,6 +34,8 @@ model:
   td3_clip_target: True
   huber_beta: 1.0
   use_system_mu: True
+  pressure_balance_coef: 0.02
+  pressure_release_coef: 0.05
   use_functional_call: False
 
   gat_heads: 4
@@ -69,4 +71,3 @@ trainer:
 logger:
   save_rate: 20
   attention: False
-

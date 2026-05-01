@@ -6,48 +6,87 @@ import random
 import gym
 import numpy as np
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from torch.nn.utils import clip_grad_norm_
 
-try:
-    from torch.func import functional_call as torch_functional_call
-except ImportError:
-    from torch.nn.utils.stateless import functional_call as torch_functional_call
-
-from . import RLAgent
 from .actor import BaseActor
 from .critic import HyperTwinCritic
-from .gat_encoder import GATEncoder
 from .hypernetwork import HyperNetwork
-from agent import utils
+from .rl_agent import RLAgent
+from . import utils
 from common.registry import Registry
 from generator import IntersectionPhaseGenerator, LaneVehicleGenerator
 
 
-@Registry.register_model('h2tsc')
-class H2TSCAgent(RLAgent):
+class LocalSurrogateDynamics(nn.Module):
     """
-    Hypernetwork + GAT multi-agent traffic signal control (CTDE).
+    Local forward model for the model-based HypeMARL update.
+    """
+
+    def __init__(
+        self,
+        state_dim,
+        action_dim,
+        meta_dim,
+        hidden_dims=(256, 256),
+        dropout=0.0,
+        residual=True,
+    ):
+        super().__init__()
+        self.residual = residual
+        dims = [state_dim + action_dim + meta_dim] + list(hidden_dims) + [state_dim]
+        layers = []
+
+        for idx in range(len(dims) - 2):
+            layers.append(nn.Linear(dims[idx], dims[idx + 1]))
+            layers.append(nn.ReLU())
+            if dropout > 0.0:
+                layers.append(nn.Dropout(dropout))
+        layers.append(nn.Linear(dims[-2], dims[-1]))
+
+        self.net = nn.Sequential(*layers)
+
+    def forward(self, state, action, meta):
+        delta_or_next = self.net(torch.cat([state, action, meta], dim=-1))
+        if self.residual:
+            return state + delta_or_next
+        return delta_or_next
+
+
+@Registry.register_model('hyperlight')
+class HyperLightAgent(RLAgent):
+    """
+    HyperMARL-inspired traffic signal controller.
+
+    This class is intentionally self-contained: the TSC interface, positional
+    encoding, hypernetwork actor/critic, TD3 update, and optional local
+    surrogate dynamics are implemented here directly from the HyperMARL paper's
+    method structure.
     """
 
     def __init__(self, world, rank):
         super().__init__(world, world.intersection_ids[rank])
 
         cfg = Registry.mapping['model_mapping']['setting'].param
+        trainer_cfg = Registry.mapping['trainer_mapping']['setting'].param
 
         self.world = world
         self.rank = rank
         self.sub_agents = len(self.world.intersections)
 
-        self.buffer_size = Registry.mapping['trainer_mapping']['setting'].param['buffer_size']
+        self.buffer_size = int(trainer_cfg['buffer_size'])
         self.replay_buffer = deque(maxlen=self.buffer_size)
 
-        self.phase_lengths = np.array([len(inter.phases) for inter in self.world.intersections], dtype=np.int64)
+        self.phase_lengths = np.asarray(
+            [len(inter.phases) for inter in self.world.intersections],
+            dtype=np.int64,
+        )
         self.action_space = gym.spaces.Discrete(int(self.phase_lengths.max()))
 
-        self.phase = cfg.get('phase', True)
-        self.one_hot = cfg.get('one_hot', True)
+        self.phase = bool(cfg.get('phase', True))
+        self.one_hot = bool(cfg.get('one_hot', True))
         self.vehicle_max = float(cfg.get('vehicle_max', 1.0))
         if self.vehicle_max <= 0:
             self.vehicle_max = 1.0
@@ -55,43 +94,38 @@ class H2TSCAgent(RLAgent):
         state_features = cfg.get('state_features', ['lane_count', 'lane_waiting_count'])
         self.state_features = state_features if isinstance(state_features, list) else [state_features]
 
-        use_cuda = cfg.get('use_cuda', True)
+        use_cuda = bool(cfg.get('use_cuda', True))
         self.device = torch.device('cuda' if torch.cuda.is_available() and use_cuda else 'cpu')
 
         self.gamma = float(cfg.get('gamma', 0.99))
-        self.tau = float(cfg.get('tau', 0.01))
+        self.tau = float(cfg.get('tau', 0.005))
         self.batch_size = int(cfg.get('batch_size', 64))
         self.grad_clip = float(cfg.get('grad_clip', 5.0))
         self.policy_delay = max(1, int(cfg.get('policy_delay', 2)))
         self.reward_scale = float(cfg.get('reward_scale', 1.0))
         self.actor_warmup_steps = max(0, int(cfg.get('actor_warmup_steps', 1000)))
-        self.actor_entropy_coef = float(cfg.get('actor_entropy_coef', 0.01))
+        self.actor_entropy_coef = float(cfg.get('actor_entropy_coef', 0.0))
         self.target_policy_noise = float(cfg.get('target_policy_noise', 0.05))
         self.target_noise_clip = float(cfg.get('target_noise_clip', 0.10))
         self.td3_clip_target = bool(cfg.get('td3_clip_target', True))
         self.huber_beta = float(cfg.get('huber_beta', 1.0))
-        self.use_system_mu = bool(cfg.get('use_system_mu', True))
-        self.pressure_balance_coef = float(cfg.get('pressure_balance_coef', 0.02))
-        self.pressure_release_coef = float(cfg.get('pressure_release_coef', 0.05))
 
         self.epsilon = float(cfg.get('epsilon', 0.5))
         self.epsilon_decay = float(cfg.get('epsilon_decay', 0.9995))
         self.epsilon_min = float(cfg.get('epsilon_min', 0.05))
 
-        gat_hidden_dim = int(cfg.get('gat_hidden_dim', 128))
-        gat_heads = int(cfg.get('gat_heads', 4))
-        gat_layers = int(cfg.get('gat_layers', 2))
-        gat_dropout = float(cfg.get('gat_dropout', 0.0))
+        self.use_system_mu = bool(cfg.get('use_system_mu', True))
+        self.pressure_balance_coef = float(cfg.get('pressure_balance_coef', 0.0))
+        self.pressure_release_coef = float(cfg.get('pressure_release_coef', 0.0))
 
-        pe_dim = int(cfg.get('pe_dim', 32))
-        hyper_hidden = cfg.get('hyper_hidden', [256, 512])
+        self.actor_hidden1 = int(cfg.get('actor_hidden1', 64))
+        self.actor_hidden2 = int(cfg.get('actor_hidden2', 32))
+        self.actor_chunk_size = int(cfg.get('actor_chunk_size', 1024))
+        self.critic_chunk_size = int(cfg.get('critic_chunk_size', 1024))
+        hyper_hidden = cfg.get('hyper_hidden', [128, 256])
         if not isinstance(hyper_hidden, list):
             hyper_hidden = [int(hyper_hidden)]
-
-        self.actor_hidden1 = int(cfg.get('actor_hidden1', 128))
-        self.actor_hidden2 = int(cfg.get('actor_hidden2', 64))
-
-        critic_hidden = cfg.get('critic_hidden', [256])
+        critic_hidden = cfg.get('critic_hidden', [128])
         if not isinstance(critic_hidden, list):
             critic_hidden = [int(critic_hidden)]
         critic_hyper_hidden = cfg.get('critic_hyper_hidden', hyper_hidden)
@@ -100,9 +134,7 @@ class H2TSCAgent(RLAgent):
 
         actor_lr = float(cfg.get('learning_rate', 3e-4))
         critic_lr = float(cfg.get('critic_lr', actor_lr))
-
-        # Fast batched actor path is much faster than nested functional_call loops.
-        self.use_functional_call = bool(cfg.get('use_functional_call', False))
+        hyper_dropout = float(cfg.get('hyper_dropout', 0.0))
 
         self._build_generators()
 
@@ -113,11 +145,14 @@ class H2TSCAgent(RLAgent):
         self.adj = self._build_adjacency_matrix().to(self.device)
         self.action_mask = self._build_action_mask().to(self.device)
         self.node_pos = self._build_node_positions().to(self.device)
-        self.pos_encoding = self._build_sinusoidal_position_encoding(self.node_pos, pe_dim).to(self.device)
-        self.pe_dim = self.pos_encoding.shape[-1]
+        self.pe_dim = int(cfg.get('pe_dim', 64))
+        self.pos_encoding = self._build_sinusoidal_position_encoding(self.node_pos, self.pe_dim)
+        self.pos_encoding = self.pos_encoding.to(self.device)
+
         self.static_system_mu = self._build_static_system_mu().to(self.device)
         self.dynamic_system_mu_dim = 8 if self.use_system_mu else 0
         self.system_mu_dim = int(self.static_system_mu.numel() + self.dynamic_system_mu_dim)
+        self.meta_dim = self.pe_dim + self.system_mu_dim
 
         self.base_actor = BaseActor(
             self.state_dim,
@@ -132,63 +167,80 @@ class H2TSCAgent(RLAgent):
         self.actor_param_dim = sum(item[2] for item in self.actor_param_meta)
         self.theta_layout = self._build_theta_layout()
 
-        meta_input_dim = gat_hidden_dim + self.pe_dim + self.state_dim + self.system_mu_dim
-
-        self.gat_encoder = GATEncoder(
-            self.state_dim,
-            gat_hidden_dim,
-            heads=gat_heads,
-            layers=gat_layers,
-            dropout=gat_dropout,
+        self.hypernet = HyperNetwork(
+            self.meta_dim,
+            hyper_hidden,
+            self.actor_param_dim,
+            dropout=hyper_dropout,
         ).to(self.device)
-        self.target_gat_encoder = GATEncoder(
-            self.state_dim,
-            gat_hidden_dim,
-            heads=gat_heads,
-            layers=gat_layers,
-            dropout=gat_dropout,
+        self.target_hypernet = HyperNetwork(
+            self.meta_dim,
+            hyper_hidden,
+            self.actor_param_dim,
+            dropout=hyper_dropout,
         ).to(self.device)
-
-        hyper_dropout = float(cfg.get('hyper_dropout', 0.0))
-        self.hypernet = HyperNetwork(meta_input_dim, hyper_hidden, self.actor_param_dim, dropout=hyper_dropout).to(self.device)
-        self.target_hypernet = HyperNetwork(meta_input_dim, hyper_hidden, self.actor_param_dim, dropout=hyper_dropout).to(self.device)
 
         self.critic = HyperTwinCritic(
             self.state_dim,
             self.action_space.n,
-            self.pe_dim + self.system_mu_dim,
+            self.meta_dim,
             hidden_dims=tuple(critic_hidden),
             hyper_hidden=tuple(critic_hyper_hidden),
             dropout=hyper_dropout,
+            chunk_size=self.critic_chunk_size,
         ).to(self.device)
         self.target_critic = HyperTwinCritic(
             self.state_dim,
             self.action_space.n,
-            self.pe_dim + self.system_mu_dim,
+            self.meta_dim,
             hidden_dims=tuple(critic_hidden),
             hyper_hidden=tuple(critic_hyper_hidden),
             dropout=hyper_dropout,
+            chunk_size=self.critic_chunk_size,
         ).to(self.device)
 
-        self.actor_optimizer = optim.Adam(
-            list(self.gat_encoder.parameters()) + list(self.hypernet.parameters()),
-            lr=actor_lr,
-        )
-        self.critic_optimizer = optim.Adam(self.critic.parameters(), lr=critic_lr)
+        self.model_based = bool(cfg.get('model_based', True))
+        self.surrogate_update_steps = max(0, int(cfg.get('surrogate_update_steps', 1)))
+        self.surrogate_warmup_steps = max(0, int(cfg.get('surrogate_warmup_steps', 2000)))
+        self.imagined_updates = max(0, int(cfg.get('imagined_updates', 1)))
+        self.surrogate_rollout_horizon = max(1, int(cfg.get('surrogate_rollout_horizon', 1)))
+        self.surrogate_loss_coef = float(cfg.get('surrogate_loss_coef', 0.1))
+        self.surrogate_huber_beta = float(cfg.get('surrogate_huber_beta', 1.0))
+        self.surrogate_state_clip = cfg.get('surrogate_state_clip', 2.0)
+        self.imagined_reward_mode = cfg.get('imagined_reward_mode', 'waiting_count')
 
-        self._hard_update(self.target_gat_encoder, self.gat_encoder)
+        surrogate_hidden = cfg.get('surrogate_hidden', [128, 128])
+        if not isinstance(surrogate_hidden, list):
+            surrogate_hidden = [int(surrogate_hidden)]
+        self.surrogate = LocalSurrogateDynamics(
+            self.state_dim,
+            self.action_space.n,
+            self.meta_dim,
+            hidden_dims=tuple(surrogate_hidden),
+            dropout=float(cfg.get('surrogate_dropout', hyper_dropout)),
+            residual=bool(cfg.get('surrogate_residual', True)),
+        ).to(self.device)
+
+        self.actor_optimizer = optim.Adam(self.hypernet.parameters(), lr=actor_lr)
+        self.critic_optimizer = optim.Adam(self.critic.parameters(), lr=critic_lr)
+        self.surrogate_optimizer = optim.Adam(
+            self.surrogate.parameters(),
+            lr=float(cfg.get('forward_lr', actor_lr)),
+        )
+
         self._hard_update(self.target_hypernet, self.hypernet)
         self._hard_update(self.target_critic, self.critic)
 
         self.train_step = 0
-        self.best_epoch = 0
+        self.last_surrogate_loss = 0.0
         self._cached_action_prob = None
         self._last_abs_pressure = None
 
     def __repr__(self):
         return (
-            f"H2TSCAgent(sub_agents={self.sub_agents}, state_dim={self.state_dim}, "
-            f"action_dim={self.action_space.n}, device={self.device})"
+            f"HyperLightAgent(sub_agents={self.sub_agents}, state_dim={self.state_dim}, "
+            f"action_dim={self.action_space.n}, meta_dim={self.meta_dim}, "
+            f"model_based={self.model_based}, device={self.device})"
         )
 
     def _build_generators(self):
@@ -286,13 +338,11 @@ class H2TSCAgent(RLAgent):
     def _build_action_mask(self):
         mask = torch.zeros((self.sub_agents, self.action_space.n), dtype=torch.bool)
         for idx, phase_num in enumerate(self.phase_lengths):
-            valid = max(1, int(phase_num))
-            mask[idx, :valid] = True
+            mask[idx, : max(1, int(phase_num))] = True
         return mask
 
     def _build_adjacency_matrix(self):
         adj = torch.eye(self.sub_agents, dtype=torch.float32)
-
         edge_index = None
         edge_weight = None
 
@@ -316,18 +366,14 @@ class H2TSCAgent(RLAgent):
             if edge_weight is None or len(edge_weight) != edge_index.shape[1]:
                 edge_weight = torch.ones((edge_index.shape[1],), dtype=torch.float32)
 
-            for e_idx in range(edge_index.shape[1]):
-                src = int(edge_index[0, e_idx])
-                dst = int(edge_index[1, e_idx])
+            for edge_idx in range(edge_index.shape[1]):
+                src = int(edge_index[0, edge_idx])
+                dst = int(edge_index[1, edge_idx])
                 if src >= self.sub_agents or dst >= self.sub_agents:
                     continue
-
-                w = float(edge_weight[e_idx])
-                w = max(w, 1e-3)
-                if w > float(adj[src, dst]):
-                    adj[src, dst] = w
-                if w > float(adj[dst, src]):
-                    adj[dst, src] = w
+                weight = max(float(edge_weight[edge_idx]), 1e-3)
+                adj[src, dst] = max(float(adj[src, dst]), weight)
+                adj[dst, src] = max(float(adj[dst, src]), weight)
 
         adj.fill_diagonal_(1.0)
         return adj
@@ -350,19 +396,17 @@ class H2TSCAgent(RLAgent):
         coord_max = coords.max(axis=0, keepdims=True)
         denom = np.where((coord_max - coord_min) < 1e-6, 1.0, coord_max - coord_min)
         coords = (coords - coord_min) / denom
-
         return torch.tensor(coords, dtype=torch.float32)
 
     def _build_sinusoidal_position_encoding(self, coords, pe_dim):
         pe_dim = max(4, int(pe_dim))
         quarter = max(1, pe_dim // 4)
+        base = float(Registry.mapping['model_mapping']['setting'].param.get('pe_base', 1000.0))
 
-        freqs = torch.exp(
-            torch.linspace(0.0, -math.log(10000.0), quarter, device=coords.device)
-        )
-
-        x_proj = coords[:, 0:1] * freqs.unsqueeze(0)
-        y_proj = coords[:, 1:2] * freqs.unsqueeze(0)
+        idx = torch.arange(quarter, dtype=torch.float32, device=coords.device)
+        denom = torch.pow(torch.full_like(idx, base), 2.0 * idx / float(max(1, pe_dim)))
+        x_proj = coords[:, 0:1] / denom.unsqueeze(0)
+        y_proj = coords[:, 1:2] / denom.unsqueeze(0)
 
         pe = torch.cat(
             [
@@ -377,33 +421,31 @@ class H2TSCAgent(RLAgent):
         if pe.shape[-1] < pe_dim:
             pad = torch.zeros((coords.shape[0], pe_dim - pe.shape[-1]), device=coords.device)
             pe = torch.cat([pe, pad], dim=-1)
-
         return pe[:, :pe_dim]
 
     def _build_static_system_mu(self):
         if not self.use_system_mu:
             return torch.zeros(0, dtype=torch.float32)
 
-        n = max(1, self.sub_agents)
+        n_agents = max(1, self.sub_agents)
         off_diag = self.adj.detach().cpu().clone()
         off_diag.fill_diagonal_(0.0)
         edge_mask = off_diag > 0.0
         degree = edge_mask.float().sum(dim=-1)
         phase_counts = torch.tensor(self.phase_lengths, dtype=torch.float32)
 
-        if n > 1:
-            density = edge_mask.float().sum() / float(n * (n - 1))
-            degree_scale = float(n - 1)
+        if n_agents > 1:
+            density = edge_mask.float().sum() / float(n_agents * (n_agents - 1))
+            degree_scale = float(n_agents - 1)
         else:
             density = torch.tensor(0.0)
             degree_scale = 1.0
 
-        pos = self.node_pos.detach().cpu()
-        pos_std = pos.std(dim=0, unbiased=False)
+        pos_std = self.node_pos.detach().cpu().std(dim=0, unbiased=False)
 
         return torch.stack(
             [
-                torch.tensor(math.log1p(n) / math.log1p(256.0), dtype=torch.float32),
+                torch.tensor(math.log1p(n_agents) / math.log1p(256.0), dtype=torch.float32),
                 density.float(),
                 degree.mean() / degree_scale,
                 degree.std(unbiased=False) / degree_scale,
@@ -426,8 +468,8 @@ class H2TSCAgent(RLAgent):
         node_load = traffic.mean(dim=-1)
         load_mean = node_load.mean(dim=-1, keepdim=True)
         load_std = node_load.std(dim=-1, unbiased=False, keepdim=True)
-
         hotspot_threshold = load_mean + load_std
+
         dynamic_mu = torch.cat(
             [
                 traffic_flat.mean(dim=-1, keepdim=True),
@@ -441,12 +483,13 @@ class H2TSCAgent(RLAgent):
             ],
             dim=-1,
         )
-
         return torch.cat([static_mu, dynamic_mu], dim=-1)
 
-    def _expand_system_mu(self, state_tensor):
+    def _meta_input(self, state_tensor):
+        pe = self.pos_encoding.unsqueeze(0).expand(state_tensor.shape[0], -1, -1)
         system_mu = self._system_mu_from_state(state_tensor)
-        return system_mu.unsqueeze(1).expand(-1, self.sub_agents, -1)
+        system_mu = system_mu.unsqueeze(1).expand(-1, self.sub_agents, -1)
+        return torch.cat([pe, system_mu], dim=-1)
 
     def _collect_actor_param_meta(self):
         meta = []
@@ -462,14 +505,7 @@ class H2TSCAgent(RLAgent):
             offset += numel
         return layout
 
-    def _theta_to_actor_params(self, theta_vec):
-        params = {}
-        for name, shape, start, end in self.theta_layout:
-            params[name] = theta_vec[start:end].view(shape)
-        return params
-
     def _unpack_theta_batch(self, theta):
-        # theta: [B, N, P]
         params = {}
         for name, shape, start, end in self.theta_layout:
             params[name] = theta[..., start:end].view(*theta.shape[:-1], *shape)
@@ -485,29 +521,37 @@ class H2TSCAgent(RLAgent):
         w3 = params['fc3.weight']
         b3 = params['fc3.bias']
 
-        h1 = torch.einsum('bni,bnoi->bno', state_tensor, w1) + b1
-        h1 = F.relu(h1)
-
-        h2 = torch.einsum('bni,bnoi->bno', h1, w2) + b2
-        h2 = F.relu(h2)
-
-        logits = torch.einsum('bni,bnoi->bno', h2, w3) + b3
+        hidden = torch.einsum('bni,bnoi->bno', state_tensor, w1) + b1
+        hidden = F.relu(hidden)
+        hidden = torch.einsum('bni,bnoi->bno', hidden, w2) + b2
+        hidden = F.relu(hidden)
+        logits = torch.einsum('bni,bnoi->bno', hidden, w3) + b3
         return logits
 
-    def _functional_actor_forward(self, state_tensor, theta):
-        batch_logits = []
-        for b_idx in range(state_tensor.shape[0]):
-            node_logits = []
-            for n_idx in range(self.sub_agents):
-                param_dict = self._theta_to_actor_params(theta[b_idx, n_idx])
-                logit = torch_functional_call(
-                    self.base_actor,
-                    param_dict,
-                    (state_tensor[b_idx, n_idx].unsqueeze(0),),
-                )
-                node_logits.append(logit.squeeze(0))
-            batch_logits.append(torch.stack(node_logits, dim=0))
-        return torch.stack(batch_logits, dim=0)
+    def _flat_actor_forward(self, state_flat, theta_flat):
+        params = {}
+        for name, shape, start, end in self.theta_layout:
+            params[name] = theta_flat[:, start:end].view(theta_flat.shape[0], *shape)
+
+        hidden = torch.einsum('mi,moi->mo', state_flat, params['fc1.weight']) + params['fc1.bias']
+        hidden = F.relu(hidden)
+        hidden = torch.einsum('mi,moi->mo', hidden, params['fc2.weight']) + params['fc2.bias']
+        hidden = F.relu(hidden)
+        return torch.einsum('mi,moi->mo', hidden, params['fc3.weight']) + params['fc3.bias']
+
+    def _chunked_actor_forward(self, state_tensor, meta_tensor, hypernet):
+        batch_size, n_agents, _ = state_tensor.shape
+        state_flat = state_tensor.reshape(batch_size * n_agents, -1)
+        meta_flat = meta_tensor.reshape(batch_size * n_agents, -1)
+
+        logits = []
+        chunk_size = max(1, int(self.actor_chunk_size))
+        for start in range(0, state_flat.shape[0], chunk_size):
+            end = min(start + chunk_size, state_flat.shape[0])
+            theta = hypernet(meta_flat[start:end])
+            logits.append(self._flat_actor_forward(state_flat[start:end], theta))
+
+        return torch.cat(logits, dim=0).view(batch_size, n_agents, -1)
 
     def _build_state_np(self, obs, phase):
         if self.phase:
@@ -521,29 +565,17 @@ class H2TSCAgent(RLAgent):
         return state.astype(np.float32)
 
     def _policy_logits(self, state_tensor, use_target=False):
-        # state_tensor: [B, N, state_dim]
-        gat = self.target_gat_encoder if use_target else self.gat_encoder
-        hyper = self.target_hypernet if use_target else self.hypernet
-
-        h = gat(state_tensor, self.adj)
-        pe = self.pos_encoding.unsqueeze(0).expand(state_tensor.shape[0], -1, -1)
-        system_mu = self._expand_system_mu(state_tensor)
-        meta_input = torch.cat([h, pe, system_mu, state_tensor], dim=-1)
-        theta = hyper(meta_input)
-
-        if self.use_functional_call:
-            logits = self._functional_actor_forward(state_tensor, theta)
+        hypernet = self.target_hypernet if use_target else self.hypernet
+        meta = self._meta_input(state_tensor)
+        if self.actor_chunk_size > 0:
+            logits = self._chunked_actor_forward(state_tensor, meta, hypernet)
         else:
+            theta = hypernet(meta)
             logits = self._batched_actor_forward(state_tensor, theta)
-
-        logits = logits.masked_fill(~self.action_mask.unsqueeze(0), -1e9)
-        return logits
+        return logits.masked_fill(~self.action_mask.unsqueeze(0), -1e9)
 
     def _critic_meta_input(self, state_tensor):
-        # HypeMARL parametrizes local value functions from PE(pi) and system parameter mu.
-        pe = self.pos_encoding.unsqueeze(0).expand(state_tensor.shape[0], -1, -1)
-        system_mu = self._expand_system_mu(state_tensor)
-        return torch.cat([pe, system_mu], dim=-1)
+        return self._meta_input(state_tensor)
 
     def _huber_loss(self, prediction, target):
         beta = max(self.huber_beta, 1e-6)
@@ -552,6 +584,138 @@ class H2TSCAgent(RLAgent):
         quadratic = 0.5 * error.pow(2) / beta
         linear = abs_error - 0.5 * beta
         return torch.where(abs_error < beta, quadratic, linear).mean()
+
+    def _normalize_action_probs(self, probs):
+        probs = torch.nan_to_num(probs, nan=0.0, posinf=0.0, neginf=0.0)
+        probs = probs * self.action_mask.unsqueeze(0).float()
+        denom = probs.sum(dim=-1, keepdim=True)
+        valid_prior = self.action_mask.float()
+        valid_prior = valid_prior / valid_prior.sum(dim=-1, keepdim=True).clamp_min(1.0)
+        valid_prior = valid_prior.unsqueeze(0).expand_as(probs)
+        return torch.where(denom > 1e-8, probs / denom.clamp_min(1e-8), valid_prior)
+
+    def _surrogate_loss(self, prediction, target):
+        beta = max(self.surrogate_huber_beta, 1e-6)
+        try:
+            return F.smooth_l1_loss(prediction, target, beta=beta)
+        except TypeError:
+            return F.smooth_l1_loss(prediction, target)
+
+    def _update_surrogate(self):
+        if not self.model_based or self.surrogate_update_steps <= 0:
+            return 0.0
+        if len(self.replay_buffer) < self.batch_size:
+            return 0.0
+
+        losses = []
+        for _ in range(self.surrogate_update_steps):
+            samples = random.sample(self.replay_buffer, self.batch_size)
+            state_t, next_state_t, action_t, _, _ = self._sample_batch(samples)
+            action_onehot = F.one_hot(action_t, num_classes=self.action_space.n).float()
+            action_onehot = action_onehot * self.action_mask.unsqueeze(0).float()
+            meta = self._meta_input(state_t).detach()
+
+            pred_next = self.surrogate(state_t.detach(), action_onehot.detach(), meta)
+            loss = self._surrogate_loss(pred_next, next_state_t.detach())
+            if not torch.isfinite(loss):
+                continue
+
+            self.surrogate_optimizer.zero_grad()
+            loss.backward()
+            clip_grad_norm_(self.surrogate.parameters(), self.grad_clip)
+            self.surrogate_optimizer.step()
+            losses.append(float(loss.detach().cpu().item()))
+
+        if losses:
+            self.last_surrogate_loss = float(np.mean(losses))
+        return self.last_surrogate_loss
+
+    def _sanitize_predicted_state(self, state_tensor):
+        traffic = state_tensor[..., : self.ob_length]
+        if self.surrogate_state_clip is not None:
+            traffic = traffic.clamp(0.0, float(self.surrogate_state_clip))
+        else:
+            traffic = traffic.clamp_min(0.0)
+
+        if not self.phase:
+            return traffic
+
+        phase_part = state_tensor[..., self.ob_length :]
+        if self.one_hot:
+            phase_part = phase_part.clamp(0.0, 1.0)
+            denom = phase_part.sum(dim=-1, keepdim=True)
+            valid_prior = self.action_mask.float()
+            valid_prior = valid_prior / valid_prior.sum(dim=-1, keepdim=True).clamp_min(1.0)
+            valid_prior = valid_prior.unsqueeze(0).expand_as(phase_part)
+            phase_part = torch.where(denom > 1e-6, phase_part / denom.clamp_min(1e-6), valid_prior)
+        else:
+            phase_part = phase_part.clamp(0.0, float(self.action_space.n - 1))
+        return torch.cat([traffic, phase_part], dim=-1)
+
+    def _imagined_reward(self, next_state_t, state_t):
+        traffic = next_state_t[..., : self.ob_length]
+        num_features = max(1, len(self.state_features))
+        feature_width = max(1, self.ob_length // num_features)
+
+        if self.imagined_reward_mode == 'delta_waiting':
+            prev_traffic = state_t[..., : self.ob_length]
+            reward = prev_traffic.mean(dim=-1) - traffic.mean(dim=-1)
+            return reward * self.vehicle_max
+
+        if 'lane_waiting_count' in self.state_features:
+            feature_idx = self.state_features.index('lane_waiting_count')
+            start = min(feature_idx * feature_width, self.ob_length - 1)
+            end = min(start + feature_width, self.ob_length)
+            waiting = traffic[..., start:end]
+        else:
+            waiting = traffic
+
+        return -waiting.mean(dim=-1) * self.vehicle_max
+
+    def _sample_policy_actions(self, state_t):
+        logits = self._policy_logits(state_t, use_target=False)
+        probs = self._normalize_action_probs(torch.softmax(logits, dim=-1))
+        flat_probs = probs.reshape(-1, self.action_space.n)
+        return torch.multinomial(flat_probs, 1).view(state_t.shape[0], self.sub_agents)
+
+    def _build_imagined_batch(self):
+        if len(self.replay_buffer) < self.batch_size:
+            return None
+
+        samples = random.sample(self.replay_buffer, self.batch_size)
+        state_t, _, _, _, _ = self._sample_batch(samples)
+
+        states = []
+        next_states = []
+        actions = []
+        rewards = []
+        dones = []
+        current_state = state_t.detach()
+
+        with torch.no_grad():
+            for _ in range(self.surrogate_rollout_horizon):
+                action_idx = self._sample_policy_actions(current_state)
+                action_onehot = F.one_hot(action_idx, num_classes=self.action_space.n).float()
+                action_onehot = action_onehot * self.action_mask.unsqueeze(0).float()
+                meta = self._meta_input(current_state)
+                predicted_next = self.surrogate(current_state, action_onehot, meta)
+                predicted_next = self._sanitize_predicted_state(predicted_next)
+                reward = self._imagined_reward(predicted_next, current_state)
+
+                states.append(current_state)
+                next_states.append(predicted_next)
+                actions.append(action_idx)
+                rewards.append(reward)
+                dones.append(torch.zeros((current_state.shape[0], 1), dtype=torch.float32, device=self.device))
+                current_state = predicted_next.detach()
+
+        return (
+            torch.cat(states, dim=0),
+            torch.cat(next_states, dim=0),
+            torch.cat(actions, dim=0),
+            torch.cat(rewards, dim=0),
+            torch.cat(dones, dim=0),
+        )
 
     def reset(self):
         self._build_generators()
@@ -572,6 +736,7 @@ class H2TSCAgent(RLAgent):
     def get_reward(self):
         rewards = []
         current_abs_pressure = []
+
         for reward_gen in self.reward_generator:
             reward = np.asarray(reward_gen.generate(), dtype=np.float32)
             rewards.append(float(np.mean(reward)))
@@ -587,14 +752,12 @@ class H2TSCAgent(RLAgent):
                 current_abs_pressure.append(abs(pressure))
 
             current_abs_pressure = np.asarray(current_abs_pressure, dtype=np.float32)
+            rewards = np.asarray(rewards, dtype=np.float32)
             pressure_scale = max(self.vehicle_max, 1.0)
 
             if self.pressure_balance_coef > 0.0:
-                # Keep in/out flow balanced so the policy cannot hide congestion by starving throughput.
                 balance_reward = -current_abs_pressure / pressure_scale
-                rewards = np.asarray(rewards, dtype=np.float32) + self.pressure_balance_coef * balance_reward
-            else:
-                rewards = np.asarray(rewards, dtype=np.float32)
+                rewards = rewards + self.pressure_balance_coef * balance_reward
 
             if self.pressure_release_coef > 0.0:
                 if self._last_abs_pressure is None:
@@ -610,11 +773,10 @@ class H2TSCAgent(RLAgent):
     def get_phase(self):
         phase = []
         for phase_gen in self.phase_generator:
-            cur = np.asarray(phase_gen.generate()).reshape(-1)
-            phase.append(int(cur[0]))
+            cur_phase = np.asarray(phase_gen.generate()).reshape(-1)
+            phase.append(int(cur_phase[0]))
         phase = np.asarray(phase, dtype=np.int64)
-        phase = np.minimum(np.maximum(phase, 0), self.phase_lengths - 1)
-        return phase
+        return np.minimum(np.maximum(phase, 0), self.phase_lengths - 1)
 
     def get_queue(self):
         queue = []
@@ -630,7 +792,7 @@ class H2TSCAgent(RLAgent):
 
     def sample(self):
         return np.asarray(
-            [np.random.randint(0, max(1, int(self.phase_lengths[i]))) for i in range(self.sub_agents)],
+            [np.random.randint(0, max(1, int(self.phase_lengths[idx]))) for idx in range(self.sub_agents)],
             dtype=np.int64,
         )
 
@@ -646,7 +808,6 @@ class H2TSCAgent(RLAgent):
         probs = self._policy_prob_from_np(ob, phase)
         probs_cpu = probs.cpu()
         self._cached_action_prob = probs_cpu
-
         probs_np = probs_cpu.numpy()
 
         if test:
@@ -659,13 +820,12 @@ class H2TSCAgent(RLAgent):
                 actions.append(np.random.randint(0, valid_dim))
                 continue
 
-            p = probs_np[idx, :valid_dim]
-            p_sum = p.sum()
-            if p_sum <= 1e-8 or not np.isfinite(p_sum):
+            prob = probs_np[idx, :valid_dim]
+            prob_sum = prob.sum()
+            if prob_sum <= 1e-8 or not np.isfinite(prob_sum):
                 actions.append(np.random.randint(0, valid_dim))
             else:
-                p = p / p_sum
-                actions.append(np.random.choice(valid_dim, p=p))
+                actions.append(np.random.choice(valid_dim, p=prob / prob_sum))
 
         return np.asarray(actions, dtype=np.int64)
 
@@ -712,20 +872,14 @@ class H2TSCAgent(RLAgent):
 
         return state_t, next_state_t, action_t, reward_t, done_t
 
-    def train(self):
-        if len(self.replay_buffer) < self.batch_size:
-            return 0.0
-
+    def _td3_update(self, state_t, next_state_t, action_t, reward_t, done_t):
         self.train_step += 1
-        samples = random.sample(self.replay_buffer, self.batch_size)
-        state_t, next_state_t, action_t, reward_t, done_t = self._sample_batch(samples)
-
-        batch_size = state_t.shape[0]
         critic_meta = self._critic_meta_input(state_t)
 
         action_onehot = F.one_hot(action_t, num_classes=self.action_space.n).float()
         action_onehot = action_onehot * self.action_mask.unsqueeze(0).float()
         reward_local = reward_t.unsqueeze(-1) * self.reward_scale
+        done_view = done_t.view(done_t.shape[0], 1, 1)
 
         q1_current, q2_current = self.critic(state_t, action_onehot, critic_meta, reduce=False)
 
@@ -737,27 +891,20 @@ class H2TSCAgent(RLAgent):
                 noise = torch.randn_like(next_probs) * self.target_policy_noise
                 noise = noise.clamp(-self.target_noise_clip, self.target_noise_clip)
                 next_probs = (next_probs + noise).clamp_min(0.0)
-                next_probs = next_probs * self.action_mask.unsqueeze(0).float()
-                denom = next_probs.sum(dim=-1, keepdim=True)
-                valid_prior = self.action_mask.float()
-                valid_prior = valid_prior / valid_prior.sum(dim=-1, keepdim=True).clamp_min(1.0)
-                valid_prior = valid_prior.unsqueeze(0).expand_as(next_probs)
-                next_probs = torch.where(denom > 1e-8, next_probs / denom.clamp_min(1e-8), valid_prior)
 
+            next_probs = self._normalize_action_probs(next_probs)
             target_meta = self._critic_meta_input(next_state_t)
             q1_target, q2_target = self.target_critic(next_state_t, next_probs, target_meta, reduce=False)
             min_q_target = torch.min(q1_target, q2_target)
+
             if self.td3_clip_target:
                 q_current_min = torch.min(q1_current, q2_current).detach().min()
                 q_current_max = torch.max(q1_current, q2_current).detach().max()
                 min_q_target = min_q_target.clamp(q_current_min, q_current_max)
-            target_q = reward_local + self.gamma * (1.0 - done_t.unsqueeze(1)) * min_q_target
 
-        critic_loss = (
-            self._huber_loss(q1_current, target_q)
-            + self._huber_loss(q2_current, target_q)
-        )
+            target_q = reward_local + self.gamma * (1.0 - done_view) * min_q_target
 
+        critic_loss = self._huber_loss(q1_current, target_q) + self._huber_loss(q2_current, target_q)
         if not torch.isfinite(critic_loss):
             return 0.0
 
@@ -768,32 +915,54 @@ class H2TSCAgent(RLAgent):
 
         if self.train_step % self.policy_delay == 0 and self.train_step >= self.actor_warmup_steps:
             policy_logits = self._policy_logits(state_t, use_target=False)
-            policy_probs = torch.softmax(policy_logits, dim=-1)
+            policy_probs = self._normalize_action_probs(torch.softmax(policy_logits, dim=-1))
 
-            actor_q = self.critic.q1(state_t, policy_probs, critic_meta, reduce=True).mean()
+            q1_actor, q2_actor = self.critic(state_t, policy_probs, critic_meta, reduce=True)
+            actor_q = 0.5 * (q1_actor.mean() + q2_actor.mean())
             entropy = -(policy_probs * torch.log(policy_probs.clamp_min(1e-8))).sum(dim=-1).mean()
             actor_loss = -(actor_q + self.actor_entropy_coef * entropy)
 
             if torch.isfinite(actor_loss):
                 self.actor_optimizer.zero_grad()
                 actor_loss.backward()
-                clip_grad_norm_(
-                    list(self.gat_encoder.parameters()) + list(self.hypernet.parameters()),
-                    self.grad_clip,
-                )
+                clip_grad_norm_(self.hypernet.parameters(), self.grad_clip)
                 self.actor_optimizer.step()
 
-                self._soft_update(self.target_gat_encoder, self.gat_encoder, self.tau)
                 self._soft_update(self.target_hypernet, self.hypernet, self.tau)
                 self._soft_update(self.target_critic, self.critic, self.tau)
+
+        return float(critic_loss.detach().cpu().item())
+
+    def train(self):
+        if len(self.replay_buffer) < self.batch_size:
+            return 0.0
+
+        surrogate_loss = self._update_surrogate()
+
+        samples = random.sample(self.replay_buffer, self.batch_size)
+        state_t, next_state_t, action_t, reward_t, done_t = self._sample_batch(samples)
+        real_loss = self._td3_update(state_t, next_state_t, action_t, reward_t, done_t)
+
+        imagined_losses = []
+        if (
+            self.model_based
+            and self.imagined_updates > 0
+            and self.train_step >= self.surrogate_warmup_steps
+        ):
+            for _ in range(self.imagined_updates):
+                imagined = self._build_imagined_batch()
+                if imagined is None:
+                    continue
+                i_state, i_next_state, i_action, i_reward, i_done = imagined
+                imagined_losses.append(self._td3_update(i_state, i_next_state, i_action, i_reward, i_done))
 
         if self.epsilon > self.epsilon_min:
             self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
 
-        return float(critic_loss.detach().cpu().item())
+        imagined_loss = float(np.mean(imagined_losses)) if imagined_losses else 0.0
+        return float(real_loss + imagined_loss + self.surrogate_loss_coef * surrogate_loss)
 
     def update_target_network(self):
-        self._soft_update(self.target_gat_encoder, self.gat_encoder, self.tau)
         self._soft_update(self.target_hypernet, self.hypernet, self.tau)
         self._soft_update(self.target_critic, self.critic, self.tau)
 
@@ -802,34 +971,28 @@ class H2TSCAgent(RLAgent):
         if not os.path.exists(model_dir):
             os.makedirs(model_dir)
 
-        save_path = os.path.join(model_dir, f'{e}_{self.rank}.pt')
         payload = {
-            'gat_encoder': self.gat_encoder.state_dict(),
-            'target_gat_encoder': self.target_gat_encoder.state_dict(),
             'hypernet': self.hypernet.state_dict(),
             'target_hypernet': self.target_hypernet.state_dict(),
             'critic': self.critic.state_dict(),
             'target_critic': self.target_critic.state_dict(),
+            'surrogate': self.surrogate.state_dict(),
             'actor_optimizer': self.actor_optimizer.state_dict(),
             'critic_optimizer': self.critic_optimizer.state_dict(),
+            'surrogate_optimizer': self.surrogate_optimizer.state_dict(),
             'epsilon': self.epsilon,
             'train_step': self.train_step,
+            'last_surrogate_loss': self.last_surrogate_loss,
         }
-        torch.save(payload, save_path)
+        torch.save(payload, os.path.join(model_dir, f'{e}_{self.rank}.pt'))
 
     def load_model(self, e=0):
         model_dir = os.path.join(Registry.mapping['logger_mapping']['path'].path, 'model')
-        load_path = os.path.join(model_dir, f'{e}_{self.rank}.pt')
-        checkpoint = torch.load(load_path, map_location=self.device)
+        checkpoint = torch.load(os.path.join(model_dir, f'{e}_{self.rank}.pt'), map_location=self.device)
 
-        self.gat_encoder.load_state_dict(checkpoint['gat_encoder'])
         self.hypernet.load_state_dict(checkpoint['hypernet'])
         self.critic.load_state_dict(checkpoint['critic'])
-
-        if 'target_gat_encoder' in checkpoint:
-            self.target_gat_encoder.load_state_dict(checkpoint['target_gat_encoder'])
-        else:
-            self._hard_update(self.target_gat_encoder, self.gat_encoder)
+        self.surrogate.load_state_dict(checkpoint['surrogate'])
 
         if 'target_hypernet' in checkpoint:
             self.target_hypernet.load_state_dict(checkpoint['target_hypernet'])
@@ -845,9 +1008,12 @@ class H2TSCAgent(RLAgent):
             self.actor_optimizer.load_state_dict(checkpoint['actor_optimizer'])
         if 'critic_optimizer' in checkpoint:
             self.critic_optimizer.load_state_dict(checkpoint['critic_optimizer'])
+        if 'surrogate_optimizer' in checkpoint:
+            self.surrogate_optimizer.load_state_dict(checkpoint['surrogate_optimizer'])
 
         self.epsilon = float(checkpoint.get('epsilon', self.epsilon))
         self.train_step = int(checkpoint.get('train_step', self.train_step))
+        self.last_surrogate_loss = float(checkpoint.get('last_surrogate_loss', self.last_surrogate_loss))
 
     @staticmethod
     def _hard_update(target, source):
@@ -857,5 +1023,3 @@ class H2TSCAgent(RLAgent):
     def _soft_update(target, source, tau):
         for target_param, source_param in zip(target.parameters(), source.parameters()):
             target_param.data.copy_(target_param.data * (1.0 - tau) + source_param.data * tau)
-
-
