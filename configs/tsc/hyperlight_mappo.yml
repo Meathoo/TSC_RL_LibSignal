@@ -1,0 +1,13 @@
+includes:
+  - configs/tsc/hyperlight_ppo.yml
+
+
+model:
+  name: hyperlight_mappo
+  centralized_critic: True
+  centralized_critic_mode: pooled
+  value_hidden: [128, 64]
+
+
+trainer:
+  buffer_size: 1000

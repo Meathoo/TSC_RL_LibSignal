@@ -1,0 +1,67 @@
+includes:
+  - configs/tsc/base.yml
+
+
+model:
+  name: hyperlight_ppo
+  train_model: True
+  test_model: True
+  load_model: False
+  graphic: True
+
+  phase: True
+  one_hot: True
+  state_features: ["lane_count", "lane_waiting_count"]
+  vehicle_max: 50
+
+  learning_rate: 0.0003
+  adam_eps: 0.00001
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_eps: 0.2
+  clip_vf: 0.2
+  entropy_coef: 0.01
+  value_coef: 0.5
+  reward_scale: 0.05
+  grad_clip: 0.5
+
+  ppo_epochs: 4
+  ppo_rollout_steps: 360
+  ppo_minibatch_size: 2048
+  normalize_advantage: True
+
+  centralized_critic: False
+  centralized_critic_mode: pooled # pooled | concat
+  agent_embedding_mode: one_hot   # one_hot | learned
+  agent_embedding_dim: 64         # only used when agent_embedding_mode=learned
+
+  hypernet_type: mlp              # mlp | linear
+  actor_hypernet_type: mlp        # mlp | linear
+  value_hypernet_type: mlp        # mlp | linear
+  hyper_hidden: [64]
+  value_hyper_hidden: [64]
+  hyper_dropout: 0.0
+
+  actor_hidden1: 64
+  actor_hidden2: 64
+  value_hidden: [64, 64]
+
+
+trainer:
+  learning_start: -1
+  buffer_size: 1000
+  steps: 3600
+  test_steps: 3600
+  action_interval: 10
+  episodes: 200
+  update_model_rate: 1
+  update_target_rate: 1
+  test_when_train: True
+  test_interval: 5
+  early_stop_patience: 8
+  load_best_for_test: True
+
+
+logger:
+  save_rate: 20
+  attention: False

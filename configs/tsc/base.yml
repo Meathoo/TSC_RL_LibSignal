@@ -5,7 +5,7 @@ task:
 world:
 # necessary and distinctive parameters for simulators
   interval: 1.0
-  seed: 114
+  seed: 0
   dir: data/
 
   saveReplay: False

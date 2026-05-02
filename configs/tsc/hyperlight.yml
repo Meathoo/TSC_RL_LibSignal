@@ -39,6 +39,9 @@ model:
   pressure_balance_coef: 0.02
   pressure_release_coef: 0.05
 
+  hypernet_type: mlp        # mlp | linear
+  actor_hypernet_type: mlp  # mlp | linear
+  critic_hypernet_type: mlp # mlp | linear
   pe_dim: 32
   pe_base: 1000.0
   hyper_hidden: [128, 256]
@@ -51,6 +54,7 @@ model:
   critic_hyper_hidden: [128, 256]
   critic_chunk_size: 1024
 
+  mb_hypermarl: True
   model_based: True
   surrogate_hidden: [128, 128]
   surrogate_dropout: 0.05

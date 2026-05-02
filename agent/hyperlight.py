@@ -13,7 +13,7 @@ from torch.nn.utils import clip_grad_norm_
 
 from .actor import BaseActor
 from .critic import HyperTwinCritic
-from .hypernetwork import HyperNetwork
+from .hypernetwork import build_hypernetwork
 from .rl_agent import RLAgent
 from . import utils
 from common.registry import Registry
@@ -122,6 +122,9 @@ class HyperLightAgent(RLAgent):
         self.actor_hidden2 = int(cfg.get('actor_hidden2', 32))
         self.actor_chunk_size = int(cfg.get('actor_chunk_size', 1024))
         self.critic_chunk_size = int(cfg.get('critic_chunk_size', 1024))
+        self.hypernet_type = cfg.get('actor_hypernet_type', cfg.get('hypernet_type', 'mlp'))
+        self.critic_hypernet_type = cfg.get('critic_hypernet_type', self.hypernet_type)
+
         hyper_hidden = cfg.get('hyper_hidden', [128, 256])
         if not isinstance(hyper_hidden, list):
             hyper_hidden = [int(hyper_hidden)]
@@ -167,13 +170,15 @@ class HyperLightAgent(RLAgent):
         self.actor_param_dim = sum(item[2] for item in self.actor_param_meta)
         self.theta_layout = self._build_theta_layout()
 
-        self.hypernet = HyperNetwork(
+        self.hypernet = build_hypernetwork(
+            self.hypernet_type,
             self.meta_dim,
             hyper_hidden,
             self.actor_param_dim,
             dropout=hyper_dropout,
         ).to(self.device)
-        self.target_hypernet = HyperNetwork(
+        self.target_hypernet = build_hypernetwork(
+            self.hypernet_type,
             self.meta_dim,
             hyper_hidden,
             self.actor_param_dim,
@@ -188,6 +193,7 @@ class HyperLightAgent(RLAgent):
             hyper_hidden=tuple(critic_hyper_hidden),
             dropout=hyper_dropout,
             chunk_size=self.critic_chunk_size,
+            hypernet_type=self.critic_hypernet_type,
         ).to(self.device)
         self.target_critic = HyperTwinCritic(
             self.state_dim,
@@ -197,9 +203,15 @@ class HyperLightAgent(RLAgent):
             hyper_hidden=tuple(critic_hyper_hidden),
             dropout=hyper_dropout,
             chunk_size=self.critic_chunk_size,
+            hypernet_type=self.critic_hypernet_type,
         ).to(self.device)
 
-        self.model_based = bool(cfg.get('model_based', True))
+        if 'mb_hypermarl' in cfg:
+            self.model_based = bool(cfg.get('mb_hypermarl'))
+        elif 'use_surrogate' in cfg:
+            self.model_based = bool(cfg.get('use_surrogate'))
+        else:
+            self.model_based = bool(cfg.get('model_based', True))
         self.surrogate_update_steps = max(0, int(cfg.get('surrogate_update_steps', 1)))
         self.surrogate_warmup_steps = max(0, int(cfg.get('surrogate_warmup_steps', 2000)))
         self.imagined_updates = max(0, int(cfg.get('imagined_updates', 1)))
@@ -240,6 +252,7 @@ class HyperLightAgent(RLAgent):
         return (
             f"HyperLightAgent(sub_agents={self.sub_agents}, state_dim={self.state_dim}, "
             f"action_dim={self.action_space.n}, meta_dim={self.meta_dim}, "
+            f"actor_hypernet={self.hypernet_type}, critic_hypernet={self.critic_hypernet_type}, "
             f"model_based={self.model_based}, device={self.device})"
         )
 

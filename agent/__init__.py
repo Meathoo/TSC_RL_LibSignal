@@ -13,6 +13,7 @@ from .fixedtime import FixedTimeAgent
 from .mplight import MPLightAgent
 from .h2tsc_agent import H2TSCAgent
 from .hyperlight import HyperLightAgent
+from .hyperlight_ppo import HyperLightPPOAgent, HyperLightMAPPOAgent
 
 try:
     from .adapt_comm_agent import ADAPTCommAgent

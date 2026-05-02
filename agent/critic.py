@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .hypernetwork import HyperNetwork
+from .hypernetwork import build_hypernetwork
 
 
 class QNetwork(nn.Module):
@@ -42,13 +42,29 @@ class HyperQNetwork(nn.Module):
     Local Q network whose weights are generated from agent metadata.
     """
 
-    def __init__(self, state_dim, action_dim, meta_dim, hidden_dims, hyper_hidden, dropout=0.0, chunk_size=None):
+    def __init__(
+        self,
+        state_dim,
+        action_dim,
+        meta_dim,
+        hidden_dims,
+        hyper_hidden,
+        dropout=0.0,
+        chunk_size=None,
+        hypernet_type='mlp',
+    ):
         super().__init__()
         self.input_dim = state_dim + action_dim
         self.dims = [self.input_dim] + list(hidden_dims) + [1]
         self.layout = self._build_layout()
         self.param_dim = self.layout[-1][-1]
-        self.hypernet = HyperNetwork(meta_dim, hyper_hidden, self.param_dim, dropout=dropout)
+        self.hypernet = build_hypernetwork(
+            hypernet_type,
+            meta_dim,
+            hyper_hidden,
+            self.param_dim,
+            dropout=dropout,
+        )
         self.chunk_size = chunk_size
 
     def _build_layout(self):
@@ -113,6 +129,7 @@ class HyperTwinCritic(nn.Module):
         hyper_hidden=(256, 512),
         dropout=0.0,
         chunk_size=None,
+        hypernet_type='mlp',
     ):
         super().__init__()
         self.q1_net = HyperQNetwork(
@@ -123,6 +140,7 @@ class HyperTwinCritic(nn.Module):
             hyper_hidden,
             dropout=dropout,
             chunk_size=chunk_size,
+            hypernet_type=hypernet_type,
         )
         self.q2_net = HyperQNetwork(
             state_dim,
@@ -132,6 +150,7 @@ class HyperTwinCritic(nn.Module):
             hyper_hidden,
             dropout=dropout,
             chunk_size=chunk_size,
+            hypernet_type=hypernet_type,
         )
 
     def forward(self, state, action, meta, reduce=True):

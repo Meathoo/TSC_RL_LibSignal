@@ -16,8 +16,9 @@ MODES = ["TRAIN", "TEST"]
 # ========================
 # Support both folders and direct *_DTL.log files.
 INPUT_PATHS = [
-    "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight/cityflow7x28/hyperlight_exp/logger/2026_04_29-13_02_10_DTL.log",
-    "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight/cityflow7x28/hyperlight_cf2/logger/2026_04_30-11_08_07_DTL.log",
+    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight/cityflow7x28/hyperlight_exp/logger/2026_04_29-13_02_10_DTL.log",
+    "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight/cityflow7x28/hyperlight_cf2/logger/seed0/2026_04_30-11_08_07_DTL.log",
+    "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight/cityflow7x28/hyperlight_cf2/logger/seed114/2026_05_01-18_04_25_DTL.log",
     "/DaRL/LibSignal/data/output_data/tsc/cityflow_colight/cityflow_7x28/test/logger/from_remote.log",
     "/DaRL/LibSignal/data/output_data/tsc/cityflow_colight/cityflow_7x28/test/logger/2026_04_08-20_18_16_DTL.log",
     # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight/cityflow4x4/hyperlight_exp/logger/2026_04_29-05_50_19_DTL.log",
@@ -28,8 +29,9 @@ INPUT_PATHS = [
 # Optional: set custom labels for each input path.
 # Keep empty to use folder/file names automatically.
 DISPLAY_NAMES: List[str] = [
-    "hyperlight_cf1",
-    "hyperlight_cf2",
+    # "hyperlight_cf1 (seed0)",
+    "hyperlight_cf2 (seed0)",
+    "hyperlight_cf2 (seed114)",
     "colight1",
     "colight2",
 ]
@@ -39,7 +41,7 @@ MODES_TO_PLOT = ["TRAIN", "TEST"]
 
 # Moving Average Settings
 USE_MOVING_AVERAGE = True  # Set to True to enable moving average smoothing
-MOVING_AVERAGE_WINDOW = 5  # Window size for moving average (higher = smoother curve)
+MOVING_AVERAGE_WINDOW = 1  # Window size for moving average (higher = smoother curve)
 
 # Output settings
 OUTPUT_DIR = "compare_outputs"
