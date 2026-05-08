@@ -16,24 +16,47 @@ MODES = ["TRAIN", "TEST"]
 # ========================
 # Support both folders and direct *_DTL.log files.
 INPUT_PATHS = [
-    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight/cityflow7x28/hyperlight_exp/logger/2026_04_29-13_02_10_DTL.log",
-    "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight/cityflow7x28/hyperlight_cf2/logger/seed0/2026_04_30-11_08_07_DTL.log",
-    "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight/cityflow7x28/hyperlight_cf2/logger/seed114/2026_05_01-18_04_25_DTL.log",
-    "/DaRL/LibSignal/data/output_data/tsc/cityflow_colight/cityflow_7x28/test/logger/from_remote.log",
-    "/DaRL/LibSignal/data/output_data/tsc/cityflow_colight/cityflow_7x28/test/logger/2026_04_08-20_18_16_DTL.log",
-    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight/cityflow4x4/hyperlight_exp/logger/2026_04_29-05_50_19_DTL.log",
-    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight/cityflow4x4/hyperlight_exp/logger/2026_04_30-09_13_14_DTL.log",
-    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_colight/cityflow4x4/test/logger/2026_04_23-19_39_43_DTL.log",
+    # 4x4
+    "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_ppo/cityflow4x4/hyperlight_ppo_seed0/logger/2026_05_02-10_53_38_DTL.log",
+    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow4x4/hyperlight_mappo_seed0/logger/2026_05_02-12_05_45_DTL.log",
+    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow4x4/seed1/logger/2026_05_03-16_56_25_DTL.log",
+    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow4x4/seed2/logger/2026_05_04-17_22_44_DTL.log",
+    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_colight/cityflow4x4/seed0/remote.log",
+    "/DaRL/LibSignal/data/output_data/tsc/cityflow_colight/cityflow4x4/test/logger/2026_04_23-19_39_43_DTL.log",
+    "/DaRL/LibSignal/data/output_data/tsc/cityflow_frap/cityflow4x4/seed0/logger/2026_05_05-20_56_37_DTL.log",
+    "/DaRL/LibSignal/data/output_data/tsc/cityflow_mplight/cityflow4x4/seed0/logger/2026_05_06-02_38_21_DTL.log",
+
+    # 7x28
+    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow7x28/seed0/logger/2026_05_02-18_15_03_DTL.log",
+    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow7x28/seed1/logger/2026_05_03-04_04_05_DTL.log",
+    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow7x28/seed2/logger/2026_05_04-02_12_01_DTL.log",
+    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_colight/cityflow_7x28/test/logger/from_remote.log",
+    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_colight/cityflow7x28/seed2/logger/2026_05_04-18_17_36_DTL.log",
+    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_mplight/cityflow7x28/seed0/logger/2026_05_07-17_23_53_DTL.log",
 ]
 
 # Optional: set custom labels for each input path.
 # Keep empty to use folder/file names automatically.
 DISPLAY_NAMES: List[str] = [
-    # "hyperlight_cf1 (seed0)",
-    "hyperlight_cf2 (seed0)",
-    "hyperlight_cf2 (seed114)",
-    "colight1",
-    "colight2",
+    # 4x4
+    "hyperlight_ppo (seed0)",
+    # "hyperlight_mappo (seed0)",
+    # "hyperlight_mappo (seed1)",
+    # "hyperlight_mappo (seed2)",
+    # "colight",
+    "colight (seed2)",
+    "frap",
+    "mplight"
+
+
+
+    # 7x28
+#     "hyperlight_mappo (seed0)",
+#     "hyperlight_mappo (seed1)",
+#     "hyperlight_mappo (seed2)",
+#     "colight",
+#     "colight (seed2)",
+#     "mplight",
 ]
 
 # Which modes to export in one run.
@@ -41,7 +64,7 @@ MODES_TO_PLOT = ["TRAIN", "TEST"]
 
 # Moving Average Settings
 USE_MOVING_AVERAGE = True  # Set to True to enable moving average smoothing
-MOVING_AVERAGE_WINDOW = 1  # Window size for moving average (higher = smoother curve)
+MOVING_AVERAGE_WINDOW = 5  # Window size for moving average (higher = smoother curve)
 
 # Output settings
 OUTPUT_DIR = "compare_outputs"
@@ -227,7 +250,7 @@ def plot_all_metrics(
     if USE_MOVING_AVERAGE:
         title += f" (MA window={MOVING_AVERAGE_WINDOW})"
     fig.suptitle(title, fontsize=14)
-    fig.tight_layout(rect=[0, 0, 1, 0.94])
+    fig.tight_layout(rect=[0, 0, 1, 0.97])
 
     os.makedirs(output_dir, exist_ok=True)
     out_file = os.path.join(output_dir, f"all_metrics_{mode}.png")
@@ -237,6 +260,49 @@ def plot_all_metrics(
     if show:
         plt.show()
     plt.close(fig)
+
+
+def plot_individual_metrics(
+    sources: List[Tuple[str, str, List[Record]]],
+    mode: str,
+    output_dir: str,
+    show: bool,
+) -> None:
+    """Plot each metric in a separate figure."""
+    for metric in METRICS:
+        fig, ax = plt.subplots(figsize=(10, 6))
+        metric_used = 0
+        
+        for label, _log_path, records in sources:
+            x, y = records_to_series(records, mode=mode, metric=metric)
+            if not x:
+                continue
+            ax.plot(x, y, linewidth=2.0, label=label, marker='o', markersize=3, alpha=0.8)
+            metric_used += 1
+        
+        if metric_used > 0:
+            ax.set_title(f"{metric.upper()} ({mode})", fontsize=14, pad=15)
+            ax.set_xlabel("Episode", fontsize=12)
+            ax.set_ylabel(metric, fontsize=12)
+            ax.grid(alpha=0.3, linestyle='--')
+            
+            if metric == "loss":
+                ax.set_yscale("symlog", linthresh=1.0)
+            
+            handles, labels = ax.get_legend_handles_labels()
+            if handles:
+                ax.legend(handles, labels, loc="best", fontsize=11)
+            
+            fig.tight_layout()
+            
+            os.makedirs(output_dir, exist_ok=True)
+            out_file = os.path.join(output_dir, f"metric_{metric}_{mode}.png")
+            fig.savefig(out_file, dpi=FIG_DPI)
+            print(f"[DONE] 圖已輸出: {out_file}")
+        
+        if show:
+            plt.show()
+        plt.close(fig)
 
 
 def build_summary_csv(sources: List[Tuple[str, str, List[Record]]], mode: str, output_dir: str) -> None:
@@ -284,6 +350,12 @@ def main():
             print(f"[WARN] 跳過未知 mode: {mode}")
             continue
         plot_all_metrics(
+            sources=sources,
+            mode=mode,
+            output_dir=OUTPUT_DIR,
+            show=SHOW_PLOT,
+        )
+        plot_individual_metrics(
             sources=sources,
             mode=mode,
             output_dir=OUTPUT_DIR,
