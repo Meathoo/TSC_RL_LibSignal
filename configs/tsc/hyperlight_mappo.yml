@@ -5,10 +5,10 @@ includes:
 model:
   name: hyperlight_mappo
   centralized_critic: True
-  # concat is closest to the public HyperMARL MAPPO implementation.
-  # Use pooled only as a memory fallback on very large TSC maps.
-  centralized_critic_mode: concat
-  value_hidden: [64, 64]
+  # Stable pre-RF baseline. `concat` is closer to MAPPO paper style, but pooled
+  # is safer for TSC maps and matched the stronger early HyperLight-MAPPO runs.
+  centralized_critic_mode: pooled
+  value_hidden: [128, 64]
 
 
 trainer:

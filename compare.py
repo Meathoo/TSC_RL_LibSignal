@@ -17,41 +17,45 @@ MODES = ["TRAIN", "TEST"]
 # Support both folders and direct *_DTL.log files.
 INPUT_PATHS = [
     # 4x4
-    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_ppo/cityflow4x4/hyperlight_ppo_seed0/logger/2026_05_02-10_53_38_DTL.log",
-    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow4x4/hyperlight_mappo_seed0/logger/2026_05_02-12_05_45_DTL.log",
+    "/DaRL/LibSignal/data/output_data/tsc/cityflow_dqn/cityflow4x4/seed0/logger/2026_05_13-08_35_46_DTL.log",
+    "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow4x4/v2_seed0_remote/result.log",
+    "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow4x4/seed0_headAbla2/logger/2026_05_13-11_38_52_DTL.log",
+    "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_ppo/cityflow4x4/hyperlight_ppo_seed0/logger/2026_05_02-10_53_38_DTL.log",
+    "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow4x4/hyperlight_mappo_seed0/logger/2026_05_02-12_05_45_DTL.log",
     # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow4x4/seed1/logger/2026_05_03-16_56_25_DTL.log",
     # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow4x4/seed2/logger/2026_05_04-17_22_44_DTL.log",
-    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_colight/cityflow4x4/seed0/remote.log",
+    "/DaRL/LibSignal/data/output_data/tsc/cityflow_colight/cityflow4x4/seed0/remote.log",
     # "/DaRL/LibSignal/data/output_data/tsc/cityflow_colight/cityflow4x4/test/logger/2026_04_23-19_39_43_DTL.log",
-    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_frap/cityflow4x4/seed0/logger/2026_05_05-20_56_37_DTL.log",
-    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_mplight/cityflow4x4/seed0/logger/2026_05_06-02_38_21_DTL.log",
+    "/DaRL/LibSignal/data/output_data/tsc/cityflow_frap/cityflow4x4/seed0/logger/2026_05_05-20_56_37_DTL.log",
+    "/DaRL/LibSignal/data/output_data/tsc/cityflow_mplight/cityflow4x4/seed0/logger/2026_05_06-02_38_21_DTL.log",
 
     # 7x28
     # "/DaRL/LibSignal/data/output_data/tsc/cityflow_maxpressure/cityflow7x28/seed0/logger/2026_05_11-19_10_44_BRF.log",
-    "/DaRL/LibSignal/data/output_data/tsc/cityflow_dqn/cityflow7x28/seed0/logger/2026_05_11-19_32_44_DTL.log",
-    "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_ppo/cityflow7x28/seed0/logger/2026_05_11-10_29_25_DTL.log",
-    "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow7x28/seed0/logger/2026_05_02-18_15_03_DTL.log",
+    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_dqn/cityflow7x28/seed0/logger/2026_05_11-19_32_44_DTL.log",
+    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_ppo/cityflow7x28/seed0/logger/2026_05_11-10_29_25_DTL.log",
+    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow7x28/seed0/logger/2026_05_02-18_15_03_DTL.log",
     # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow7x28/seed1/logger/2026_05_03-04_04_05_DTL.log",
     # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow7x28/seed2/logger/2026_05_04-02_12_01_DTL.log",
     # "/DaRL/LibSignal/data/output_data/tsc/cityflow_colight/cityflow_7x28/test/logger/from_remote.log",
-    "/DaRL/LibSignal/data/output_data/tsc/cityflow_colight/cityflow7x28/seed2/logger/2026_05_04-18_17_36_DTL.log",
-    "/DaRL/LibSignal/data/output_data/tsc/cityflow_mplight/cityflow7x28/seed0/logger/2026_05_07-17_23_53_DTL.log",
-    "/DaRL/LibSignal/data/output_data/tsc/cityflow_frap/cityflow7x28/seed0/logger/2026_05_08-18_10_49_DTL.log",
+#     "/DaRL/LibSignal/data/output_data/tsc/cityflow_colight/cityflow7x28/seed2/logger/2026_05_04-18_17_36_DTL.log",
+#     "/DaRL/LibSignal/data/output_data/tsc/cityflow_mplight/cityflow7x28/seed0/logger/2026_05_07-17_23_53_DTL.log",
+#     "/DaRL/LibSignal/data/output_data/tsc/cityflow_frap/cityflow7x28/seed0/logger/2026_05_08-18_10_49_DTL.log",
 ]
 
 # Optional: set custom labels for each input path.
 # Keep empty to use folder/file names automatically.
 DISPLAY_NAMES: List[str] = [
     # 4x4
-    # "maxpressure",
     "dqn",
+    "v2",
+    "v2_fix",
+    # "dqn",
     "hyperlight_ppo",
-    "hyperlight_mappo",
-    # "hyperlight_mappo (seed0)",
+    "hyperlight_mappo (seed0)",
     # "hyperlight_mappo (seed1)",
     # "hyperlight_mappo (seed2)",
-    # "colight",
-    "colight (seed2)",
+    "colight",
+    # "colight (seed2)",
     "mplight",
     "frap",
 

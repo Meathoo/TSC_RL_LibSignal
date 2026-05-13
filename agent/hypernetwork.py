@@ -65,9 +65,10 @@ def build_generated_param_scaler(
     cfg,
     output_gain_key=None,
     default_output_gain=1.0,
+    enabled_key='hyper_rf_scaling',
 ):
     """
-    Build RF scaler from model config.
+    Build runtime RF scaler from model config.
     """
 
     output_gain = cfg.get('hyper_rf_output_gain', default_output_gain)
@@ -75,12 +76,36 @@ def build_generated_param_scaler(
         output_gain = cfg.get(output_gain_key, output_gain)
 
     return GeneratedParamScaler(
-        enabled=bool(cfg.get('hyper_rf_scaling', False)),
+        enabled=bool(cfg.get(enabled_key, False)),
         mode=cfg.get('hyper_rf_mode', 'fan_in'),
         hidden_gain=float(cfg.get('hyper_rf_hidden_gain', math.sqrt(2.0))),
         output_gain=float(output_gain),
         bias_scale=float(cfg.get('hyper_rf_bias_scale', 1.0)),
     )
+
+
+def build_generated_param_init_config(
+    cfg,
+    output_gain_key=None,
+    default_output_gain=1.0,
+):
+    """
+    Build init-only RF config for layerwise hypernetwork output heads.
+
+    This keeps the HyperMARL RF idea at initialization time instead of applying
+    a repeated scale to every generated target parameter during forward passes.
+    """
+
+    output_gain = cfg.get('hyper_rf_output_gain', default_output_gain)
+    if output_gain_key is not None:
+        output_gain = cfg.get(output_gain_key, output_gain)
+
+    return {
+        'rf_init': bool(cfg.get('hyper_rf_init', cfg.get('hyper_rf_scaling', False))),
+        'rf_mode': cfg.get('hyper_rf_mode', 'fan_in'),
+        'rf_hidden_gain': float(cfg.get('hyper_rf_hidden_gain', math.sqrt(2.0))),
+        'rf_output_gain': float(output_gain),
+    }
 
 
 class LinearHyperNetwork(nn.Module):
@@ -137,6 +162,10 @@ class LayerwiseHyperNetwork(nn.Module):
         dropout=0.0,
         use_bias=True,
         head_init_gain=1.0,
+        rf_init=False,
+        rf_mode='fan_in',
+        rf_hidden_gain=math.sqrt(2.0),
+        rf_output_gain=1.0,
     ):
         super().__init__()
         self.output_dim = int(output_dim)
@@ -150,8 +179,9 @@ class LayerwiseHyperNetwork(nn.Module):
         self.hypernet_type = kind
         self.weight_heads = nn.ModuleList()
         self.bias_heads = nn.ModuleList()
+        layer_count = len(self.target_layout)
 
-        for _, (out_dim, in_dim), _, weight_end, bias_end in self.target_layout:
+        for layer_idx, (_, (out_dim, in_dim), _, weight_end, bias_end) in enumerate(self.target_layout):
             weight_dim = int(out_dim) * int(in_dim)
             bias_dim = int(out_dim)
             if kind in ('linear', 'lin'):
@@ -172,7 +202,16 @@ class LayerwiseHyperNetwork(nn.Module):
                     dropout,
                     use_bias,
                 )
-            self._init_weight_head(weight_head, head_init_gain)
+            init_gain = float(head_init_gain)
+            if rf_init:
+                init_gain = float(rf_output_gain if layer_idx == layer_count - 1 else rf_hidden_gain)
+            self._init_weight_head(
+                weight_head,
+                init_gain,
+                target_out_dim=out_dim,
+                target_in_dim=in_dim,
+                target_orthogonal=rf_init,
+            )
             self._init_bias_head(bias_head)
             self.weight_heads.append(weight_head)
             self.bias_heads.append(bias_head)
@@ -261,11 +300,34 @@ class LayerwiseHyperNetwork(nn.Module):
                 return layer
         raise TypeError('Hypernetwork head does not contain a Linear layer')
 
-    def _init_weight_head(self, module, gain):
+    def _init_weight_head(
+        self,
+        module,
+        gain,
+        target_out_dim=None,
+        target_in_dim=None,
+        target_orthogonal=False,
+    ):
         layer = self._last_linear(module)
-        nn.init.orthogonal_(layer.weight, gain=float(gain))
+        if target_orthogonal and target_out_dim is not None and target_in_dim is not None:
+            self._init_target_orthogonal_head(layer, target_out_dim, target_in_dim, gain)
+        else:
+            nn.init.orthogonal_(layer.weight, gain=float(gain))
         if layer.bias is not None:
             nn.init.zeros_(layer.bias)
+
+    @staticmethod
+    def _init_target_orthogonal_head(layer, target_out_dim, target_in_dim, gain):
+        weight_dim = int(target_out_dim) * int(target_in_dim)
+        if layer.weight.shape[0] != weight_dim:
+            nn.init.orthogonal_(layer.weight, gain=float(gain))
+            return
+
+        with torch.no_grad():
+            for col_idx in range(layer.weight.shape[1]):
+                target_weight = layer.weight.new_empty(int(target_out_dim), int(target_in_dim))
+                nn.init.orthogonal_(target_weight, gain=float(gain))
+                layer.weight[:, col_idx].copy_(target_weight.reshape(-1))
 
     def _init_bias_head(self, module):
         layer = self._last_linear(module)
@@ -297,6 +359,10 @@ def build_hypernetwork(
     head_mode='flat',
     use_bias=True,
     head_init_gain=1.0,
+    rf_init=False,
+    rf_mode='fan_in',
+    rf_hidden_gain=math.sqrt(2.0),
+    rf_output_gain=1.0,
 ):
     """
     Build a linear or MLP hypernetwork from config.
@@ -314,6 +380,10 @@ def build_hypernetwork(
             dropout=dropout,
             use_bias=use_bias,
             head_init_gain=head_init_gain,
+            rf_init=rf_init,
+            rf_mode=rf_mode,
+            rf_hidden_gain=rf_hidden_gain,
+            rf_output_gain=rf_output_gain,
         )
     if kind in ('linear', 'lin'):
         return LinearHyperNetwork(input_dim, output_dim)

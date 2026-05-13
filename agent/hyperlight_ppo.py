@@ -11,7 +11,10 @@ from torch.distributions import Categorical
 from torch.nn.utils import clip_grad_norm_
 
 from .actor import BaseActor
-from .hypernetwork import build_generated_param_scaler, build_hypernetwork
+from .hypernetwork import (
+    build_generated_param_init_config,
+    build_hypernetwork,
+)
 from .rl_agent import RLAgent
 from . import utils
 from common.registry import Registry
@@ -67,6 +70,12 @@ class HyperLightPPOAgent(RLAgent):
         self.ppo_rollout_steps = max(1, int(cfg.get('ppo_rollout_steps', 360)))
         self.ppo_minibatch_size = max(1, int(cfg.get('ppo_minibatch_size', 2048)))
         self.value_chunk_size = int(cfg.get('value_chunk_size', 0))
+        self.test_action_mode = str(cfg.get('test_action_mode', 'argmax')).lower()
+        if self.test_action_mode == 'stochastic':
+            self.test_action_mode = 'sample'
+        if self.test_action_mode not in ('argmax', 'sample'):
+            raise ValueError(f"Unknown test_action_mode: {self.test_action_mode}")
+        self.test_temperature = max(1e-6, float(cfg.get('test_temperature', 1.0)))
         self.normalize_advantage = bool(cfg.get('normalize_advantage', True))
         self.centralized_critic = bool(cfg.get('centralized_critic', False))
         self.centralized_critic_mode = str(cfg.get('centralized_critic_mode', 'pooled')).lower()
@@ -89,12 +98,12 @@ class HyperLightPPOAgent(RLAgent):
         self.hyper_head_mode = str(cfg.get('hyper_head_mode', 'layerwise')).lower()
         self.hyper_use_bias = bool(cfg.get('hyper_use_bias', True))
         self.hyper_head_init_gain = float(cfg.get('hyper_head_init_gain', 1.0))
-        self.actor_rf_scaler = build_generated_param_scaler(
+        self.actor_rf_init_config = build_generated_param_init_config(
             cfg,
             output_gain_key='hyper_rf_actor_output_gain',
             default_output_gain=0.01,
         )
-        self.value_rf_scaler = build_generated_param_scaler(
+        self.value_rf_init_config = build_generated_param_init_config(
             cfg,
             output_gain_key='hyper_rf_value_output_gain',
             default_output_gain=1.0,
@@ -154,6 +163,7 @@ class HyperLightPPOAgent(RLAgent):
             head_mode=self.hyper_head_mode,
             use_bias=self.hyper_use_bias,
             head_init_gain=float(cfg.get('hyper_actor_head_init_gain', self.hyper_head_init_gain)),
+            **self.actor_rf_init_config,
         ).to(self.device)
 
         self.value_dims = [self.value_input_dim] + self.value_hidden + [1]
@@ -169,6 +179,7 @@ class HyperLightPPOAgent(RLAgent):
             head_mode=self.hyper_head_mode,
             use_bias=self.hyper_use_bias,
             head_init_gain=float(cfg.get('hyper_value_head_init_gain', self.hyper_head_init_gain)),
+            **self.value_rf_init_config,
         ).to(self.device)
 
         optimizer_params = list(self.actor_hypernet.parameters()) + list(self.value_hypernet.parameters())
@@ -198,7 +209,9 @@ class HyperLightPPOAgent(RLAgent):
             f"action_dim={self.action_space.n}, actor_hypernet={self.hypernet_type}, "
             f"value_hypernet={self.value_hypernet_type}, hyper_heads={self.hyper_head_mode}, "
             f"embedding={self.embedding_mode}, activation={self.activation}, "
+            f"rf_init={self.actor_rf_init_config['rf_init']}, "
             f"value_chunk_size={self.value_chunk_size}, "
+            f"test_action={self.test_action_mode}@T={self.test_temperature:g}, "
             f"critic={critic_type}, device={self.device})"
         )
 
@@ -308,18 +321,11 @@ class HyperLightPPOAgent(RLAgent):
         for name, shape, start, end in self.actor_layout:
             params[name] = theta[..., start:end].view(*theta.shape[:-1], *shape)
 
-        w1 = self.actor_rf_scaler.scale_weight(params['fc1.weight'], self.actor_hidden1, self.state_dim, 0, 3)
-        b1 = self.actor_rf_scaler.scale_bias(params['fc1.bias'], self.state_dim, 0, 3)
-        w2 = self.actor_rf_scaler.scale_weight(params['fc2.weight'], self.actor_hidden2, self.actor_hidden1, 1, 3)
-        b2 = self.actor_rf_scaler.scale_bias(params['fc2.bias'], self.actor_hidden1, 1, 3)
-        w3 = self.actor_rf_scaler.scale_weight(params['fc3.weight'], self.action_space.n, self.actor_hidden2, 2, 3)
-        b3 = self.actor_rf_scaler.scale_bias(params['fc3.bias'], self.actor_hidden2, 2, 3)
-
-        x = torch.einsum('bni,bnoi->bno', state_tensor, w1) + b1
+        x = torch.einsum('bni,bnoi->bno', state_tensor, params['fc1.weight']) + params['fc1.bias']
         x = self._activate(x)
-        x = torch.einsum('bni,bnoi->bno', x, w2) + b2
+        x = torch.einsum('bni,bnoi->bno', x, params['fc2.weight']) + params['fc2.bias']
         x = self._activate(x)
-        return torch.einsum('bni,bnoi->bno', x, w3) + b3
+        return torch.einsum('bni,bnoi->bno', x, params['fc3.weight']) + params['fc3.bias']
 
     def _generated_value_forward(self, value_input, theta):
         x = value_input
@@ -328,8 +334,6 @@ class HyperLightPPOAgent(RLAgent):
             out_dim, in_dim = self.value_layout[layer_idx][1]
             weight = theta[..., weight_start:bias_start].view(*theta.shape[:-1], out_dim, in_dim)
             bias = theta[..., bias_start:end].view(*theta.shape[:-1], out_dim)
-            weight = self.value_rf_scaler.scale_weight(weight, out_dim, in_dim, layer_idx, layer_count)
-            bias = self.value_rf_scaler.scale_bias(bias, in_dim, layer_idx, layer_count)
             x = torch.einsum('bni,bnoi->bno', x, weight) + bias
             if layer_idx < len(self.value_layout) - 1:
                 x = self._activate(x)
@@ -452,12 +456,29 @@ class HyperLightPPOAgent(RLAgent):
         probs_np = probs.numpy()
 
         if test:
-            return np.argmax(probs_np, axis=-1).astype(np.int64)
+            if self.test_action_mode == 'sample':
+                return self._sample_actions_from_probs(
+                    probs_np,
+                    temperature=self.test_temperature,
+                )
+            return self._greedy_actions_from_probs(probs_np)
 
+        return self._sample_actions_from_probs(probs_np)
+
+    def _greedy_actions_from_probs(self, probs_np):
         actions = []
         for idx in range(self.sub_agents):
             valid_dim = max(1, int(self.phase_lengths[idx]))
-            prob = probs_np[idx, :valid_dim]
+            actions.append(int(np.argmax(probs_np[idx, :valid_dim])))
+        return np.asarray(actions, dtype=np.int64)
+
+    def _sample_actions_from_probs(self, probs_np, temperature=1.0):
+        actions = []
+        for idx in range(self.sub_agents):
+            valid_dim = max(1, int(self.phase_lengths[idx]))
+            prob = probs_np[idx, :valid_dim].astype(np.float64)
+            if temperature != 1.0:
+                prob = np.power(np.clip(prob, 1e-12, 1.0), 1.0 / temperature)
             prob_sum = prob.sum()
             if prob_sum <= 1e-8 or not np.isfinite(prob_sum):
                 actions.append(np.random.randint(0, valid_dim))

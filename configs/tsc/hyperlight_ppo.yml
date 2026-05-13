@@ -29,21 +29,23 @@ model:
   ppo_rollout_steps: 360
   ppo_minibatch_size: 2048
   value_chunk_size: 16
+  test_action_mode: argmax        # argmax | sample
+  test_temperature: 1.0
   normalize_advantage: True
 
   activation: relu                 # relu | tanh
   centralized_critic: False
   centralized_critic_mode: pooled # pooled | concat
-  agent_embedding_mode: one_hot   # one_hot | learned
+  agent_embedding_mode: learned   # one_hot | learned
   agent_embedding_dim: 64         # only used when agent_embedding_mode=learned
 
   hypernet_type: mlp              # mlp | linear
   actor_hypernet_type: mlp        # mlp | linear
   value_hypernet_type: mlp        # mlp | linear
-  hyper_head_mode: layerwise      # layerwise matches HyperMARL repo; flat is legacy
+  hyper_head_mode: flat           # flat is the stable pre-RF baseline; layerwise is paper-style ablation
   hyper_use_bias: True
   hyper_head_init_gain: 1.0
-  hyper_rf_scaling: True
+  hyper_rf_init: False            # RF is off for the stable pre-RF baseline
   hyper_rf_mode: fan_in           # fan_in | fan_out | fan_avg
   hyper_rf_hidden_gain: 1.41421356237
   hyper_rf_actor_output_gain: 0.01
