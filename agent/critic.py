@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .hypernetwork import build_hypernetwork
+from .hypernetwork import build_generated_param_scaler, build_hypernetwork
 
 
 class QNetwork(nn.Module):
@@ -52,6 +52,8 @@ class HyperQNetwork(nn.Module):
         dropout=0.0,
         chunk_size=None,
         hypernet_type='mlp',
+        rf_config=None,
+        rf_output_gain_key='hyper_rf_critic_output_gain',
     ):
         super().__init__()
         self.input_dim = state_dim + action_dim
@@ -64,6 +66,11 @@ class HyperQNetwork(nn.Module):
             hyper_hidden,
             self.param_dim,
             dropout=dropout,
+        )
+        self.rf_scaler = build_generated_param_scaler(
+            rf_config or {},
+            output_gain_key=rf_output_gain_key,
+            default_output_gain=1.0,
         )
         self.chunk_size = chunk_size
 
@@ -80,9 +87,12 @@ class HyperQNetwork(nn.Module):
     def _forward_flat(self, x, meta):
         theta = self.hypernet(meta)
 
+        layer_count = len(self.layout)
         for layer_idx, (out_dim, in_dim, weight_start, bias_start, end) in enumerate(self.layout):
             weight = theta[..., weight_start:bias_start].view(theta.shape[0], out_dim, in_dim)
             bias = theta[..., bias_start:end].view(theta.shape[0], out_dim)
+            weight = self.rf_scaler.scale_weight(weight, out_dim, in_dim, layer_idx, layer_count)
+            bias = self.rf_scaler.scale_bias(bias, in_dim, layer_idx, layer_count)
             x = torch.einsum('mi,moi->mo', x, weight) + bias
             if layer_idx < len(self.layout) - 1:
                 x = F.relu(x)
@@ -97,9 +107,12 @@ class HyperQNetwork(nn.Module):
         if not self.chunk_size or self.chunk_size <= 0:
             theta = self.hypernet(meta)
 
+            layer_count = len(self.layout)
             for layer_idx, (out_dim, in_dim, weight_start, bias_start, end) in enumerate(self.layout):
                 weight = theta[..., weight_start:bias_start].view(*theta.shape[:-1], out_dim, in_dim)
                 bias = theta[..., bias_start:end].view(*theta.shape[:-1], out_dim)
+                weight = self.rf_scaler.scale_weight(weight, out_dim, in_dim, layer_idx, layer_count)
+                bias = self.rf_scaler.scale_bias(bias, in_dim, layer_idx, layer_count)
                 x = torch.einsum('bni,bnoi->bno', x, weight) + bias
                 if layer_idx < len(self.layout) - 1:
                     x = F.relu(x)
@@ -130,6 +143,7 @@ class HyperTwinCritic(nn.Module):
         dropout=0.0,
         chunk_size=None,
         hypernet_type='mlp',
+        rf_config=None,
     ):
         super().__init__()
         self.q1_net = HyperQNetwork(
@@ -141,6 +155,8 @@ class HyperTwinCritic(nn.Module):
             dropout=dropout,
             chunk_size=chunk_size,
             hypernet_type=hypernet_type,
+            rf_config=rf_config,
+            rf_output_gain_key='hyper_rf_critic_output_gain',
         )
         self.q2_net = HyperQNetwork(
             state_dim,
@@ -151,6 +167,8 @@ class HyperTwinCritic(nn.Module):
             dropout=dropout,
             chunk_size=chunk_size,
             hypernet_type=hypernet_type,
+            rf_config=rf_config,
+            rf_output_gain_key='hyper_rf_critic_output_gain',
         )
 
     def forward(self, state, action, meta, reduce=True):

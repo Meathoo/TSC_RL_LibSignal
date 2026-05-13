@@ -13,7 +13,7 @@ from torch.nn.utils import clip_grad_norm_
 
 from .actor import BaseActor
 from .critic import HyperTwinCritic
-from .hypernetwork import build_hypernetwork
+from .hypernetwork import build_generated_param_scaler, build_hypernetwork
 from .rl_agent import RLAgent
 from . import utils
 from common.registry import Registry
@@ -124,6 +124,11 @@ class HyperLightAgent(RLAgent):
         self.critic_chunk_size = int(cfg.get('critic_chunk_size', 1024))
         self.hypernet_type = cfg.get('actor_hypernet_type', cfg.get('hypernet_type', 'mlp'))
         self.critic_hypernet_type = cfg.get('critic_hypernet_type', self.hypernet_type)
+        self.actor_rf_scaler = build_generated_param_scaler(
+            cfg,
+            output_gain_key='hyper_rf_actor_output_gain',
+            default_output_gain=0.01,
+        )
 
         hyper_hidden = cfg.get('hyper_hidden', [128, 256])
         if not isinstance(hyper_hidden, list):
@@ -194,6 +199,7 @@ class HyperLightAgent(RLAgent):
             dropout=hyper_dropout,
             chunk_size=self.critic_chunk_size,
             hypernet_type=self.critic_hypernet_type,
+            rf_config=cfg,
         ).to(self.device)
         self.target_critic = HyperTwinCritic(
             self.state_dim,
@@ -204,6 +210,7 @@ class HyperLightAgent(RLAgent):
             dropout=hyper_dropout,
             chunk_size=self.critic_chunk_size,
             hypernet_type=self.critic_hypernet_type,
+            rf_config=cfg,
         ).to(self.device)
 
         if 'mb_hypermarl' in cfg:
@@ -533,6 +540,12 @@ class HyperLightAgent(RLAgent):
         b2 = params['fc2.bias']
         w3 = params['fc3.weight']
         b3 = params['fc3.bias']
+        w1 = self.actor_rf_scaler.scale_weight(w1, self.actor_hidden1, self.state_dim, 0, 3)
+        b1 = self.actor_rf_scaler.scale_bias(b1, self.state_dim, 0, 3)
+        w2 = self.actor_rf_scaler.scale_weight(w2, self.actor_hidden2, self.actor_hidden1, 1, 3)
+        b2 = self.actor_rf_scaler.scale_bias(b2, self.actor_hidden1, 1, 3)
+        w3 = self.actor_rf_scaler.scale_weight(w3, self.action_space.n, self.actor_hidden2, 2, 3)
+        b3 = self.actor_rf_scaler.scale_bias(b3, self.actor_hidden2, 2, 3)
 
         hidden = torch.einsum('bni,bnoi->bno', state_tensor, w1) + b1
         hidden = F.relu(hidden)
@@ -546,11 +559,18 @@ class HyperLightAgent(RLAgent):
         for name, shape, start, end in self.theta_layout:
             params[name] = theta_flat[:, start:end].view(theta_flat.shape[0], *shape)
 
-        hidden = torch.einsum('mi,moi->mo', state_flat, params['fc1.weight']) + params['fc1.bias']
+        w1 = self.actor_rf_scaler.scale_weight(params['fc1.weight'], self.actor_hidden1, self.state_dim, 0, 3)
+        b1 = self.actor_rf_scaler.scale_bias(params['fc1.bias'], self.state_dim, 0, 3)
+        w2 = self.actor_rf_scaler.scale_weight(params['fc2.weight'], self.actor_hidden2, self.actor_hidden1, 1, 3)
+        b2 = self.actor_rf_scaler.scale_bias(params['fc2.bias'], self.actor_hidden1, 1, 3)
+        w3 = self.actor_rf_scaler.scale_weight(params['fc3.weight'], self.action_space.n, self.actor_hidden2, 2, 3)
+        b3 = self.actor_rf_scaler.scale_bias(params['fc3.bias'], self.actor_hidden2, 2, 3)
+
+        hidden = torch.einsum('mi,moi->mo', state_flat, w1) + b1
         hidden = F.relu(hidden)
-        hidden = torch.einsum('mi,moi->mo', hidden, params['fc2.weight']) + params['fc2.bias']
+        hidden = torch.einsum('mi,moi->mo', hidden, w2) + b2
         hidden = F.relu(hidden)
-        return torch.einsum('mi,moi->mo', hidden, params['fc3.weight']) + params['fc3.bias']
+        return torch.einsum('mi,moi->mo', hidden, w3) + b3
 
     def _chunked_actor_forward(self, state_tensor, meta_tensor, hypernet):
         batch_size, n_agents, _ = state_tensor.shape

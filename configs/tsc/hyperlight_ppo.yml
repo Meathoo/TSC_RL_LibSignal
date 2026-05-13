@@ -28,8 +28,10 @@ model:
   ppo_epochs: 4
   ppo_rollout_steps: 360
   ppo_minibatch_size: 2048
+  value_chunk_size: 16
   normalize_advantage: True
 
+  activation: relu                 # relu | tanh
   centralized_critic: False
   centralized_critic_mode: pooled # pooled | concat
   agent_embedding_mode: one_hot   # one_hot | learned
@@ -38,6 +40,15 @@ model:
   hypernet_type: mlp              # mlp | linear
   actor_hypernet_type: mlp        # mlp | linear
   value_hypernet_type: mlp        # mlp | linear
+  hyper_head_mode: layerwise      # layerwise matches HyperMARL repo; flat is legacy
+  hyper_use_bias: True
+  hyper_head_init_gain: 1.0
+  hyper_rf_scaling: True
+  hyper_rf_mode: fan_in           # fan_in | fan_out | fan_avg
+  hyper_rf_hidden_gain: 1.41421356237
+  hyper_rf_actor_output_gain: 0.01
+  hyper_rf_value_output_gain: 1.0
+  hyper_rf_bias_scale: 1.0
   hyper_hidden: [64]
   value_hyper_hidden: [64]
   hyper_dropout: 0.0

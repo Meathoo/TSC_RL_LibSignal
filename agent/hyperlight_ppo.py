@@ -11,7 +11,7 @@ from torch.distributions import Categorical
 from torch.nn.utils import clip_grad_norm_
 
 from .actor import BaseActor
-from .hypernetwork import build_hypernetwork
+from .hypernetwork import build_generated_param_scaler, build_hypernetwork
 from .rl_agent import RLAgent
 from . import utils
 from common.registry import Registry
@@ -66,9 +66,13 @@ class HyperLightPPOAgent(RLAgent):
         self.ppo_epochs = max(1, int(cfg.get('ppo_epochs', 4)))
         self.ppo_rollout_steps = max(1, int(cfg.get('ppo_rollout_steps', 360)))
         self.ppo_minibatch_size = max(1, int(cfg.get('ppo_minibatch_size', 2048)))
+        self.value_chunk_size = int(cfg.get('value_chunk_size', 0))
         self.normalize_advantage = bool(cfg.get('normalize_advantage', True))
         self.centralized_critic = bool(cfg.get('centralized_critic', False))
         self.centralized_critic_mode = str(cfg.get('centralized_critic_mode', 'pooled')).lower()
+        self.activation = str(cfg.get('activation', 'relu')).lower()
+        if self.activation not in ('relu', 'tanh'):
+            raise ValueError(f"Unknown HyperLight PPO activation: {self.activation}")
 
         self.actor_hidden1 = int(cfg.get('actor_hidden1', 64))
         self.actor_hidden2 = int(cfg.get('actor_hidden2', 64))
@@ -81,6 +85,19 @@ class HyperLightPPOAgent(RLAgent):
         self.value_hypernet_type = cfg.get(
             'value_hypernet_type',
             cfg.get('critic_hypernet_type', self.hypernet_type),
+        )
+        self.hyper_head_mode = str(cfg.get('hyper_head_mode', 'layerwise')).lower()
+        self.hyper_use_bias = bool(cfg.get('hyper_use_bias', True))
+        self.hyper_head_init_gain = float(cfg.get('hyper_head_init_gain', 1.0))
+        self.actor_rf_scaler = build_generated_param_scaler(
+            cfg,
+            output_gain_key='hyper_rf_actor_output_gain',
+            default_output_gain=0.01,
+        )
+        self.value_rf_scaler = build_generated_param_scaler(
+            cfg,
+            output_gain_key='hyper_rf_value_output_gain',
+            default_output_gain=1.0,
         )
         hyper_hidden = cfg.get('hyper_hidden', [64])
         if not isinstance(hyper_hidden, list):
@@ -133,6 +150,10 @@ class HyperLightPPOAgent(RLAgent):
             hyper_hidden,
             self.actor_param_dim,
             dropout=hyper_dropout,
+            target_layout=self.actor_layout,
+            head_mode=self.hyper_head_mode,
+            use_bias=self.hyper_use_bias,
+            head_init_gain=float(cfg.get('hyper_actor_head_init_gain', self.hyper_head_init_gain)),
         ).to(self.device)
 
         self.value_dims = [self.value_input_dim] + self.value_hidden + [1]
@@ -144,6 +165,10 @@ class HyperLightPPOAgent(RLAgent):
             value_hyper_hidden,
             self.value_param_dim,
             dropout=hyper_dropout,
+            target_layout=self.value_layout,
+            head_mode=self.hyper_head_mode,
+            use_bias=self.hyper_use_bias,
+            head_init_gain=float(cfg.get('hyper_value_head_init_gain', self.hyper_head_init_gain)),
         ).to(self.device)
 
         optimizer_params = list(self.actor_hypernet.parameters()) + list(self.value_hypernet.parameters())
@@ -171,7 +196,9 @@ class HyperLightPPOAgent(RLAgent):
         return (
             f"HyperLightPPOAgent(sub_agents={self.sub_agents}, state_dim={self.state_dim}, "
             f"action_dim={self.action_space.n}, actor_hypernet={self.hypernet_type}, "
-            f"value_hypernet={self.value_hypernet_type}, embedding={self.embedding_mode}, "
+            f"value_hypernet={self.value_hypernet_type}, hyper_heads={self.hyper_head_mode}, "
+            f"embedding={self.embedding_mode}, activation={self.activation}, "
+            f"value_chunk_size={self.value_chunk_size}, "
             f"critic={critic_type}, device={self.device})"
         )
 
@@ -268,6 +295,11 @@ class HyperLightPPOAgent(RLAgent):
             offset += weight_numel + bias_numel
         return layout
 
+    def _activate(self, x):
+        if self.activation == 'tanh':
+            return torch.tanh(x)
+        return F.relu(x)
+
     def _agent_meta(self, batch_size):
         return self.agent_embeddings.unsqueeze(0).expand(batch_size, -1, -1)
 
@@ -276,22 +308,50 @@ class HyperLightPPOAgent(RLAgent):
         for name, shape, start, end in self.actor_layout:
             params[name] = theta[..., start:end].view(*theta.shape[:-1], *shape)
 
-        x = torch.einsum('bni,bnoi->bno', state_tensor, params['fc1.weight']) + params['fc1.bias']
-        x = F.relu(x)
-        x = torch.einsum('bni,bnoi->bno', x, params['fc2.weight']) + params['fc2.bias']
-        x = F.relu(x)
-        return torch.einsum('bni,bnoi->bno', x, params['fc3.weight']) + params['fc3.bias']
+        w1 = self.actor_rf_scaler.scale_weight(params['fc1.weight'], self.actor_hidden1, self.state_dim, 0, 3)
+        b1 = self.actor_rf_scaler.scale_bias(params['fc1.bias'], self.state_dim, 0, 3)
+        w2 = self.actor_rf_scaler.scale_weight(params['fc2.weight'], self.actor_hidden2, self.actor_hidden1, 1, 3)
+        b2 = self.actor_rf_scaler.scale_bias(params['fc2.bias'], self.actor_hidden1, 1, 3)
+        w3 = self.actor_rf_scaler.scale_weight(params['fc3.weight'], self.action_space.n, self.actor_hidden2, 2, 3)
+        b3 = self.actor_rf_scaler.scale_bias(params['fc3.bias'], self.actor_hidden2, 2, 3)
+
+        x = torch.einsum('bni,bnoi->bno', state_tensor, w1) + b1
+        x = self._activate(x)
+        x = torch.einsum('bni,bnoi->bno', x, w2) + b2
+        x = self._activate(x)
+        return torch.einsum('bni,bnoi->bno', x, w3) + b3
 
     def _generated_value_forward(self, value_input, theta):
         x = value_input
+        layer_count = len(self.value_layout)
         for layer_idx, (_, _, weight_start, bias_start, end) in enumerate(self.value_layout):
             out_dim, in_dim = self.value_layout[layer_idx][1]
             weight = theta[..., weight_start:bias_start].view(*theta.shape[:-1], out_dim, in_dim)
             bias = theta[..., bias_start:end].view(*theta.shape[:-1], out_dim)
+            weight = self.value_rf_scaler.scale_weight(weight, out_dim, in_dim, layer_idx, layer_count)
+            bias = self.value_rf_scaler.scale_bias(bias, in_dim, layer_idx, layer_count)
             x = torch.einsum('bni,bnoi->bno', x, weight) + bias
             if layer_idx < len(self.value_layout) - 1:
-                x = F.relu(x)
+                x = self._activate(x)
         return x.squeeze(-1)
+
+    def _value_forward_from_meta(self, value_input, meta):
+        chunk_size = self.value_chunk_size
+        if chunk_size <= 0 or meta.shape[1] <= chunk_size:
+            value_theta = self.value_hypernet(meta)
+            return self._generated_value_forward(value_input, value_theta)
+
+        values = []
+        for start in range(0, meta.shape[1], chunk_size):
+            end = min(start + chunk_size, meta.shape[1])
+            value_theta = self.value_hypernet(meta[:, start:end])
+            values.append(
+                self._generated_value_forward(
+                    value_input[:, start:end],
+                    value_theta,
+                )
+            )
+        return torch.cat(values, dim=1)
 
     def _value_input(self, state_tensor):
         if not self.centralized_critic:
@@ -314,8 +374,7 @@ class HyperLightPPOAgent(RLAgent):
         logits = self._actor_forward(state_tensor, actor_theta)
         logits = logits.masked_fill(~self.action_mask.unsqueeze(0), -1e9)
 
-        value_theta = self.value_hypernet(meta)
-        values = self._generated_value_forward(self._value_input(state_tensor), value_theta)
+        values = self._value_forward_from_meta(self._value_input(state_tensor), meta)
         return logits, values
 
     def _build_state_np(self, obs, phase):

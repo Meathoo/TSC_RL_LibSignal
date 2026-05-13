@@ -42,6 +42,12 @@ model:
   hypernet_type: mlp        # mlp | linear
   actor_hypernet_type: mlp  # mlp | linear
   critic_hypernet_type: mlp # mlp | linear
+  hyper_rf_scaling: True
+  hyper_rf_mode: fan_in     # fan_in | fan_out | fan_avg
+  hyper_rf_hidden_gain: 1.41421356237
+  hyper_rf_actor_output_gain: 0.01
+  hyper_rf_critic_output_gain: 1.0
+  hyper_rf_bias_scale: 1.0
   pe_dim: 32
   pe_base: 1000.0
   hyper_hidden: [128, 256]

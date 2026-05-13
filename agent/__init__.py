@@ -12,7 +12,9 @@ from .presslight import PressLightAgent
 from .fixedtime import FixedTimeAgent
 from .mplight import MPLightAgent
 from .h2tsc_agent import H2TSCAgent
-from .hyperlight import HyperLightAgent
+# Legacy TD3/MB-HyperLight is parked while the paper-faithful PPO/MAPPO
+# branches are the active HyperMARL implementations.
+# from .hyperlight import HyperLightAgent
 from .hyperlight_ppo import HyperLightPPOAgent, HyperLightMAPPOAgent
 
 try:

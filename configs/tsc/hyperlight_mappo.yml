@@ -5,8 +5,10 @@ includes:
 model:
   name: hyperlight_mappo
   centralized_critic: True
-  centralized_critic_mode: pooled
-  value_hidden: [128, 64]
+  # concat is closest to the public HyperMARL MAPPO implementation.
+  # Use pooled only as a memory fallback on very large TSC maps.
+  centralized_critic_mode: concat
+  value_hidden: [64, 64]
 
 
 trainer:
