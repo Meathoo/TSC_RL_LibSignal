@@ -16,6 +16,7 @@ from .h2tsc_agent import H2TSCAgent
 # branches are the active HyperMARL implementations.
 # from .hyperlight import HyperLightAgent
 from .hyperlight_ppo import HyperLightPPOAgent, HyperLightMAPPOAgent
+from .native_ppo import NativePPOAgent, NativeMAPPOAgent
 
 try:
     from .adapt_comm_agent import ADAPTCommAgent

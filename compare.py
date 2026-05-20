@@ -17,56 +17,69 @@ MODES = ["TRAIN", "TEST"]
 # Support both folders and direct *_DTL.log files.
 INPUT_PATHS = [
     # 4x4
-    "/DaRL/LibSignal/data/output_data/tsc/cityflow_dqn/cityflow4x4/seed0/logger/2026_05_13-08_35_46_DTL.log",
-    "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow4x4/v2_seed0_remote/result.log",
-    "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow4x4/seed0_headAbla2/logger/2026_05_13-11_38_52_DTL.log",
-    "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_ppo/cityflow4x4/hyperlight_ppo_seed0/logger/2026_05_02-10_53_38_DTL.log",
-    "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow4x4/hyperlight_mappo_seed0/logger/2026_05_02-12_05_45_DTL.log",
+    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_ppo/cityflow4x4/hyperlight_ppo_seed0/logger/2026_05_02-10_53_38_DTL.log",
+    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow4x4/hyperlight_mappo_seed0/logger/2026_05_02-12_05_45_DTL.log",
+    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_dqn/cityflow4x4/seed0/logger/2026_05_13-08_35_46_DTL.log",
     # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow4x4/seed1/logger/2026_05_03-16_56_25_DTL.log",
     # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow4x4/seed2/logger/2026_05_04-17_22_44_DTL.log",
-    "/DaRL/LibSignal/data/output_data/tsc/cityflow_colight/cityflow4x4/seed0/remote.log",
+    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_colight/cityflow4x4/seed0/remote.log",
     # "/DaRL/LibSignal/data/output_data/tsc/cityflow_colight/cityflow4x4/test/logger/2026_04_23-19_39_43_DTL.log",
-    "/DaRL/LibSignal/data/output_data/tsc/cityflow_frap/cityflow4x4/seed0/logger/2026_05_05-20_56_37_DTL.log",
-    "/DaRL/LibSignal/data/output_data/tsc/cityflow_mplight/cityflow4x4/seed0/logger/2026_05_06-02_38_21_DTL.log",
+    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_mplight/cityflow4x4/seed0/logger/2026_05_06-02_38_21_DTL.log",
+    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_frap/cityflow4x4/seed0/logger/2026_05_05-20_56_37_DTL.log",
+
+
+    # 6x6
+    
+    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_ppo/cityflow6x6_bi/seed0_remote.log",
+    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow6x6_bi/seed0_remote.log",
+    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_dqn/cityflow6x6_bi/seed0_remote.log",
+    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_colight/cityflow6x6_bi_seed2/remote_mlp.log",
+    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_mplight/cityflow6x6_bi/seed0/logger/2026_05_14-19_46_46_DTL_mplight2.log",
+    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_frap/cityflow6x6_bi/seed0/logger/2026_05_15-09_59_52_DTL_Frap2.log",
 
     # 7x28
-    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_maxpressure/cityflow7x28/seed0/logger/2026_05_11-19_10_44_BRF.log",
-    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_dqn/cityflow7x28/seed0/logger/2026_05_11-19_32_44_DTL.log",
     # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_ppo/cityflow7x28/seed0/logger/2026_05_11-10_29_25_DTL.log",
     # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow7x28/seed0/logger/2026_05_02-18_15_03_DTL.log",
+    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_dqn/cityflow7x28/seed0/logger/2026_05_11-19_32_44_DTL.log",
     # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow7x28/seed1/logger/2026_05_03-04_04_05_DTL.log",
     # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow7x28/seed2/logger/2026_05_04-02_12_01_DTL.log",
-    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_colight/cityflow_7x28/test/logger/from_remote.log",
-#     "/DaRL/LibSignal/data/output_data/tsc/cityflow_colight/cityflow7x28/seed2/logger/2026_05_04-18_17_36_DTL.log",
-#     "/DaRL/LibSignal/data/output_data/tsc/cityflow_mplight/cityflow7x28/seed0/logger/2026_05_07-17_23_53_DTL.log",
-#     "/DaRL/LibSignal/data/output_data/tsc/cityflow_frap/cityflow7x28/seed0/logger/2026_05_08-18_10_49_DTL.log",
+    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_colight/cityflow7x28/seed2/logger/2026_05_04-18_17_36_DTL.log",
+    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_mplight/cityflow7x28/seed0/logger/mplight2_remote.log",
+    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_frap/cityflow7x28/seed0/logger/2026_05_16-06_57_35_DTL_frap2.log",
 ]
 
 # Optional: set custom labels for each input path.
 # Keep empty to use folder/file names automatically.
 DISPLAY_NAMES: List[str] = [
     # 4x4
-    "dqn",
-    "v2",
-    "v2_fix",
+    # "ours (HyperLight-PPO)",
+    # "ours (HyperLight-MAPPO)",
     # "dqn",
-    "hyperlight_ppo",
-    "hyperlight_mappo (seed0)",
     # "hyperlight_mappo (seed1)",
     # "hyperlight_mappo (seed2)",
-    "colight",
+    # "colight",
     # "colight (seed2)",
-    "mplight",
-    "frap",
+    # "mplight",
+    # "mplight2",
+    # "frap",
+    # "frap2",
+
+    # 6x6
+    # "ours (HyperLight-PPO)",
+    # "ours (HyperLight-MAPPO)",
+    # "dqn",
+    # "colight",
+    # "mplight",
+    # "frap",
 
 
     # 7x28
-#     "hyperlight_mappo (seed0)",
-#     "hyperlight_mappo (seed1)",
-#     "hyperlight_mappo (seed2)",
-#     "colight",
-#     "colight (seed2)",
-#     "mplight",
+    # "ours (HyperLight-PPO)",
+    # "ours (HyperLight-MAPPO)",
+    # "dqn",
+    # "colight",
+    # "mplight",
+    # "frap",
 ]
 
 # Which modes to export in one run.
@@ -75,6 +88,10 @@ MODES_TO_PLOT = ["TRAIN", "TEST"]
 # Moving Average Settings
 USE_MOVING_AVERAGE = True  # Set to True to enable moving average smoothing
 MOVING_AVERAGE_WINDOW = 10  # Window size for moving average (higher = smoother curve)
+
+# Episode Range Settings
+# Set to None to use all episodes, or (start_episode, end_episode) to filter
+EPISODE_RANGE = (0,200)  # Example: (0, 100) to plot episodes 0-100
 
 # Output settings
 OUTPUT_DIR = "compare_outputs"
@@ -176,6 +193,12 @@ def resolve_log_path(path: str) -> Optional[str]:
 def records_to_series(records: List[Record], mode: str, metric: str) -> Tuple[List[int], List[float]]:
     filtered = [r for r in records if r.mode == mode]
     filtered.sort(key=lambda r: r.episode)
+    
+    # Apply episode range filter if specified
+    if EPISODE_RANGE is not None:
+        start_ep, end_ep = EPISODE_RANGE
+        filtered = [r for r in filtered if start_ep <= r.episode <= end_ep]
+    
     episodes = [r.episode for r in filtered]
     values = [metric_value(r, metric) for r in filtered]
     
@@ -232,7 +255,7 @@ def plot_all_metrics(
             x, y = records_to_series(records, mode=mode, metric=metric)
             if not x:
                 continue
-            ax.plot(x, y, linewidth=1.7, label=label)
+            ax.plot(x, y, linewidth=1.0, label=label)
             metric_used += 1
 
         if metric_used > 0:
@@ -257,6 +280,8 @@ def plot_all_metrics(
         fig.legend(handles, labels, loc="upper center", ncol=max(1, len(labels)))
     
     title = f"{mode} - all metrics comparison"
+    if EPISODE_RANGE is not None:
+        title += f" (episodes {EPISODE_RANGE[0]}-{EPISODE_RANGE[1]})"
     if USE_MOVING_AVERAGE:
         title += f" (MA window={MOVING_AVERAGE_WINDOW})"
     fig.suptitle(title, fontsize=14)
@@ -287,11 +312,14 @@ def plot_individual_metrics(
             x, y = records_to_series(records, mode=mode, metric=metric)
             if not x:
                 continue
-            ax.plot(x, y, linewidth=2.0, label=label, marker='o', markersize=3, alpha=0.8)
+            ax.plot(x, y, linewidth=1.2, label=label, marker='o', markersize=2, alpha=0.8)
             metric_used += 1
         
         if metric_used > 0:
-            ax.set_title(f"{metric.upper()} ({mode})", fontsize=14, pad=15)
+            title_str = f"{metric.upper()} ({mode})"
+            if EPISODE_RANGE is not None:
+                title_str += f" (episodes {EPISODE_RANGE[0]}-{EPISODE_RANGE[1]})"
+            ax.set_title(title_str, fontsize=14, pad=15)
             ax.set_xlabel("Episode", fontsize=12)
             ax.set_ylabel(metric, fontsize=12)
             ax.grid(alpha=0.3, linestyle='--')

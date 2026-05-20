@@ -1,0 +1,6 @@
+includes:
+  - configs/tsc/mappo.yml
+
+
+model:
+  name: native_mappo

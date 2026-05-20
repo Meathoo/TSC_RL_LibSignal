@@ -1,0 +1,9 @@
+includes:
+  - configs/tsc/ppo.yml
+
+
+model:
+  name: mappo
+  centralized_critic: True
+  centralized_critic_mode: pooled
+  value_hidden: [128, 64]

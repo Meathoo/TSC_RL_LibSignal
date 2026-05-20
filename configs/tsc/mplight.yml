@@ -30,6 +30,11 @@ world:
       phase_pairs: [[1, 7], [2, 8], [1, 2], [7, 8], [4, 10], [5, 11], [10, 11], [4, 5]],
       valid_acts: null
     },
+    grid6x6: {
+      # phases: ['ET_WT','NT_ST','EL_WL','NL_SL','WT_WL','ET_EL','ST_SL','NT_NL']
+      phase_pairs: [[4, 10], [1, 7], [5, 11], [2, 8], [10, 11], [4, 5], [7, 8], [1, 2]],
+      valid_acts: null
+    },
     hz1x1: {
       # phases: ['ET_WT','NT_ST','EL_WL','NL_SL','WT_WL','ET_EL','ST_SL','NT_NL']
       phase_pairs: [[2, 6], [0, 4], [3, 7], [1, 5], [6, 7], [2, 3], [4, 5], [0, 1]],
