@@ -20,10 +20,8 @@ INPUT_PATHS = [
     # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_ppo/cityflow4x4/hyperlight_ppo_seed0/logger/2026_05_02-10_53_38_DTL.log",
     # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow4x4/hyperlight_mappo_seed0/logger/2026_05_02-12_05_45_DTL.log",
     # "/DaRL/LibSignal/data/output_data/tsc/cityflow_dqn/cityflow4x4/seed0/logger/2026_05_13-08_35_46_DTL.log",
-    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow4x4/seed1/logger/2026_05_03-16_56_25_DTL.log",
-    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow4x4/seed2/logger/2026_05_04-17_22_44_DTL.log",
+    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow4x4/seed0_rewardQueuePress/logger/2026_05_23-15_51_05_DTL.log",
     # "/DaRL/LibSignal/data/output_data/tsc/cityflow_colight/cityflow4x4/seed0/remote.log",
-    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_colight/cityflow4x4/test/logger/2026_04_23-19_39_43_DTL.log",
     # "/DaRL/LibSignal/data/output_data/tsc/cityflow_mplight/cityflow4x4/seed0/logger/2026_05_06-02_38_21_DTL.log",
     # "/DaRL/LibSignal/data/output_data/tsc/cityflow_frap/cityflow4x4/seed0/logger/2026_05_05-20_56_37_DTL.log",
 
@@ -32,17 +30,39 @@ INPUT_PATHS = [
     
     # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_ppo/cityflow6x6_bi/seed0_remote.log",
     # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow6x6_bi/seed0_remote.log",
+    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow6x6_bi/seed0_rewardQueuePress/logger/2026_05_24-16_28_23_DTL.log",
     # "/DaRL/LibSignal/data/output_data/tsc/cityflow_dqn/cityflow6x6_bi/seed0_remote.log",
     # "/DaRL/LibSignal/data/output_data/tsc/cityflow_colight/cityflow6x6_bi_seed2/remote_mlp.log",
     # "/DaRL/LibSignal/data/output_data/tsc/cityflow_mplight/cityflow6x6_bi/seed0/logger/2026_05_14-19_46_46_DTL_mplight2.log",
     # "/DaRL/LibSignal/data/output_data/tsc/cityflow_frap/cityflow6x6_bi/seed0/logger/2026_05_15-09_59_52_DTL_Frap2.log",
 
     # 7x28
-    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_ppo/cityflow7x28/seed0/logger/2026_05_11-10_29_25_DTL.log",
+    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow7x28/seed0_onehot_mlp_queue/logger/2026_05_26-17_59_47_DTL.log",；
+    "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow7x28/seed0_learned64_mlp_queue_ep250/logger/2026_05_31-19_10_31_DTL.log",
+    "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow7x28/seed1_learned64_mlp_queue_ep250/logger/2026_06_05-09_31_00_DTL.log",
+    "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow7x28/seed2_learned64_mlp_queue_ep250/logger/2026_06_05-20_10_30_DTL.log",
+    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow7x28/seed0_learned64_mlp_queuePress01_ep250/logger/2026_06_03-19_13_27_DTL.log",
+    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow7x28/seed1_learned64_mlp_queuePress01_ep250/logger/2026_06_04-07_07_22_DTL.log",
+    "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow7x28/seed0_learned64_mlp_queuePress02_ep250/logger/2026_06_02-18_53_47_DTL.log",
+    "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow7x28/seed1_learned64_mlp_queuePress02_ep250/logger/2026_06_04-19_14_08_DTL.log",
+    "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow7x28/seed2_learned64_mlp_queuePress02_ep250/logger/2026_06_08-20_58_19_DTL.log",
+    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow7x28/seed0_learned64_mlp_queuePress02005_ep250/logger/2026_05_25-15_47_26_DTL_mlp_250.log",
+    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow7x28/seed0_learned64_mlp_queuePress005005_ep250/logger/2026_06_02-05_48_47_DTL.log",
+    
+    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_maspo/cityflow7x28/seed0_learned64_mlp_queue_ep250_lr00003_epsilon0.2/logger/2026_06_01-18_51_38_DTL.log",
+    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_maspo/cityflow7x28/seed0_learned64_mlp_queue_ep250_lr00005_epsilon0.3/logger/2026_06_03-06_42_18_DTL.log",
+
     # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow7x28/seed0/logger/2026_05_02-18_15_03_DTL.log",
-    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_dqn/cityflow7x28/seed0/logger/2026_05_11-19_32_44_DTL.log",
     # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow7x28/seed1/logger/2026_05_03-04_04_05_DTL.log",
     # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow7x28/seed2/logger/2026_05_04-02_12_01_DTL.log",
+    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow7x28/seed0_onehot_mlp_queuepress/logger/2026_05_26-17_59_47_DTL.log",
+    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow7x28/seed0_learned64/logger/2026_05_13-15_36_04_DTL.log",
+
+
+    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_ppo/cityflow7x28/seed0/logger/2026_05_11-10_29_25_DTL.log",
+    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow7x28/seed0/logger/2026_05_02-18_15_03_DTL.log",
+    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow7x28/seed0_rewardQueuePress/logger/2026_05_25-15_47_26_DTL_mlp_250.log",
+    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_dqn/cityflow7x28/seed0/logger/2026_05_11-19_32_44_DTL.log",
     # "/DaRL/LibSignal/data/output_data/tsc/cityflow_colight/cityflow7x28/seed2/logger/2026_05_04-18_17_36_DTL.log",
     # "/DaRL/LibSignal/data/output_data/tsc/cityflow_mplight/cityflow7x28/seed0/logger/mplight2_remote.log",
     # "/DaRL/LibSignal/data/output_data/tsc/cityflow_frap/cityflow7x28/seed0/logger/2026_05_16-06_57_35_DTL_frap2.log",
@@ -54,19 +74,32 @@ DISPLAY_NAMES: List[str] = [
     # 4x4
     # "ours (HyperLight-PPO)",
     # "ours (HyperLight-MAPPO)",
+    # "ours (HyperLight-MAPPO) - Reward Queue Press",
     # "dqn",
-    # "hyperlight_mappo (seed1)",
-    # "hyperlight_mappo (seed2)",
     # "colight",
-    # "colight (seed2)",
     # "mplight",
-    # "mplight2",
     # "frap",
-    # "frap2",
 
     # 6x6
+    # "onehot+queue",
+    "learned+queue_seed0",
+    "learned+queue_seed1",
+    "learned+queue_seed2",
+    # "learned+queuePress0.1/0_seed0",
+    # "learned+queuePress0.1/0_seed1",
+    "learned+queuePress0.2/0_seed0",
+    "learned+queuePress0.2/0_seed1",
+    "learned+queuePress0.2/0_seed2",
+    # "learned+queuePress0.2/0.05",
+    # "learned+queuePress0.05/0.05",
+    
+    # "SPO_lr00003_epsilon0.2",
+    # "SPO_lr00005_epsilon0.3",
+    # "dqn",
+
     # "ours (HyperLight-PPO)",
     # "ours (HyperLight-MAPPO)",
+    # "ours (HyperLight-MAPPO) - Reward Queue Press",
     # "dqn",
     # "colight",
     # "mplight",
@@ -74,7 +107,16 @@ DISPLAY_NAMES: List[str] = [
 
 
     # 7x28
+    # "one_hot",
+    # "learned",
+
+    # "learned64",
+    # "ours (HyperLight-MAPPO) - Reward Queue Press",
+    # "ours (HyperLight-MAPPO) - Reward Queue Press_linear250",
+    # "ours (HyperLight-MAPPO) - Reward Queue Press_mlp250",
+    
     # "ours (HyperLight-PPO)",
+    # "ours (HyperLight-MAPPO)",
     # "ours (HyperLight-MAPPO)",
     # "dqn",
     # "colight",
@@ -91,7 +133,7 @@ MOVING_AVERAGE_WINDOW = 10  # Window size for moving average (higher = smoother 
 
 # Episode Range Settings
 # Set to None to use all episodes, or (start_episode, end_episode) to filter
-EPISODE_RANGE = (0,200)  # Example: (0, 100) to plot episodes 0-100
+EPISODE_RANGE = (0, 250)  # Example: (0, 100) to plot episodes 0-100
 
 # Output settings
 OUTPUT_DIR = "compare_outputs"

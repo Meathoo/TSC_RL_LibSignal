@@ -57,8 +57,8 @@ logger:
   data_dir: "dataset/"
   save_model: False
   save_rate: 5
+  train_log_interval: 1
   attention: False
-
 
 
 

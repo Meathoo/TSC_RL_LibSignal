@@ -1,0 +1,86 @@
+includes:
+  - configs/tsc/base.yml
+
+
+model:
+  name: hyperlight_td3
+  train_model: True
+  test_model: True
+  load_model: False
+  graphic: True
+
+  phase: True
+  one_hot: True
+  state_features: ["lane_count", "lane_waiting_count"]
+  vehicle_max: 50
+
+  learning_rate: 0.0001
+  actor_lr: 0.0001
+  critic_lr: 0.0001
+  adam_eps: 0.00001
+  batch_size: 128
+  gamma: 0.99
+  tau: 0.005
+  reward_scale: 0.05
+  use_mplight_reward: True
+  grad_clip: 0.5
+
+  epsilon: 0.5
+  epsilon_decay: 0.9995
+  epsilon_min: 0.02
+  policy_delay: 2
+  actor_warmup_steps: 1000
+  actor_entropy_coef: 0.001
+  target_policy_noise: 0.02
+  target_noise_clip: 0.05
+  huber_beta: 1.0
+  external_target_update: False  # TD3 updates targets internally after delayed actor updates
+  td3_discrete_mode: expected_q  # expected_q avoids soft-action critic extrapolation; soft_action is the old ablation
+  test_action_mode: argmax       # argmax | sample
+  test_temperature: 1.0
+
+  activation: relu               # relu | tanh
+  centralized_critic: False
+  centralized_critic_mode: pooled # pooled | concat
+  agent_embedding_mode: learned  # one_hot | learned
+  agent_embedding_dim: 64
+
+  hypernet_type: mlp             # mlp | linear
+  actor_hypernet_type: mlp       # mlp | linear
+  critic_hypernet_type: mlp      # mlp | linear
+  hyper_head_mode: flat          # flat is stable; layerwise is paper-style ablation
+  hyper_use_bias: True
+  hyper_head_init_gain: 1.0
+  hyper_rf_init: False
+  hyper_rf_mode: fan_in
+  hyper_rf_hidden_gain: 1.41421356237
+  hyper_rf_actor_output_gain: 0.01
+  hyper_rf_critic_output_gain: 1.0
+  hyper_hidden: [64]
+  critic_hyper_hidden: [64]
+  hyper_dropout: 0.0
+
+  actor_hidden1: 64
+  actor_hidden2: 64
+  critic_hidden: [128, 128]
+  critic_chunk_size: 1024
+
+
+trainer:
+  learning_start: 1000
+  buffer_size: 20000
+  steps: 3600
+  test_steps: 3600
+  action_interval: 10
+  episodes: 200
+  update_model_rate: 1
+  update_target_rate: 1
+  test_when_train: True
+  test_interval: 5
+  early_stop_patience: 0
+  load_best_for_test: True
+
+
+logger:
+  save_rate: 20
+  attention: False

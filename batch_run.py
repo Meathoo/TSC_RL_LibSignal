@@ -2,11 +2,10 @@ import subprocess
 
 # 定義所有要跑的指令清單
 tasks = [
-    "python run.py --task tsc --agent native_mappo --world cityflow --network cityflow4x4 --prefix seed0 --seed 0 --ngpu 0",
-    "python run.py --task tsc --agent native_ppo --world cityflow --network cityflow6x6_bi --prefix seed0 --seed 0 --ngpu 0",
-    "python run.py --task tsc --agent native_mappo --world cityflow --network cityflow6x6_bi --prefix seed0 --seed 0 --ngpu 0",
-    "python run.py --task tsc --agent native_ppo --world cityflow --network cityflow7x28 --prefix seed0 --seed 0 --ngpu 0",
-    "python run.py --task tsc --agent native_mappo --world cityflow --network cityflow7x28 --prefix seed0 --seed 0 --ngpu 0",
+    # "python -u run.py --task tsc --agent hyperlight_mappo --world cityflow --network cityflow4x4 --prefix seed0_rewardQueuePress --seed 0 --ngpu 0",
+    # "python -u run.py --task tsc --agent hyperlight_mappo --world cityflow --network cityflow6x6_bi --prefix seed0_rewardQueuePress --seed 0 --ngpu 0",
+    "python -u run.py --task tsc --agent hyperlight_mappo --world cityflow --network cityflow7x28 --prefix seed2_learned64_mlp_queuePress02_ep250 --seed 2 --ngpu 0",
+    # "python -u run.py --task tsc --agent hyperlight_maspo --world cityflow --network cityflow7x28 --prefix seed0_learned64_mlp_queue_ep250_lr00005_epsilon0.3 --seed 0 --ngpu 0",
 ]
 
 for cmd in tasks:

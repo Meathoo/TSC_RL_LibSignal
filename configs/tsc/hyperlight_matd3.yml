@@ -1,0 +1,12 @@
+includes:
+  - configs/tsc/hyperlight_td3.yml
+
+
+model:
+  name: hyperlight_matd3
+  centralized_critic: True
+  centralized_critic_mode: pooled # pooled is much lighter than concat on large grids
+
+  critic_hidden: [128, 128]
+  critic_hyper_hidden: [64]
+  critic_chunk_size: 512

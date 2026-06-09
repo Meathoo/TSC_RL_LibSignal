@@ -1,0 +1,10 @@
+includes:
+  - configs/tsc/hyperlight_mappo.yml
+
+
+model:
+  name: hyperlight_mappo
+  policy_objective: spo
+  spo_eps: 0.3
+  reward_mode: queue
+  learning_rate: 0.0005

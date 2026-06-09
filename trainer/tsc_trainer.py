@@ -1,3 +1,4 @@
+import logging
 import os
 import numpy as np
 from common.metrics import Metrics
@@ -29,7 +30,9 @@ class TSCTrainer(BaseTrainer):
         self.test_steps = Registry.mapping['trainer_mapping']['setting'].param['test_steps']
         self.buffer_size = Registry.mapping['trainer_mapping']['setting'].param['buffer_size']
         self.action_interval = Registry.mapping['trainer_mapping']['setting'].param['action_interval']
-        self.save_rate = Registry.mapping['logger_mapping']['setting'].param['save_rate']
+        logger_params = Registry.mapping['logger_mapping']['setting'].param
+        self.save_rate = int(logger_params['save_rate'])
+        self.train_log_interval = max(1, int(logger_params.get('train_log_interval', 1)))
         self.learning_start = Registry.mapping['trainer_mapping']['setting'].param['learning_start']
         self.update_model_rate = Registry.mapping['trainer_mapping']['setting'].param['update_model_rate']
         self.update_target_rate = Registry.mapping['trainer_mapping']['setting'].param['update_target_rate']
@@ -141,7 +144,7 @@ class TSCTrainer(BaseTrainer):
             for a in self.agents:
                 a.reset()
             if Registry.mapping['command_mapping']['setting'].param['world'] == 'cityflow':
-                if self.save_replay and e % self.save_rate == 0:
+                if self.save_replay and self.save_rate > 0 and e % self.save_rate == 0:
                     self.env.eng.set_save_replay(True)
                     self.env.eng.set_replay_file(os.path.join(self.replay_file_dir, f"episode_{e}.txt"))
                 else:
@@ -199,16 +202,31 @@ class TSCTrainer(BaseTrainer):
             else:
                 mean_loss = 0
             
-            self.writeLog("TRAIN", e, self.metric.real_average_travel_time(),\
-                mean_loss, self.metric.rewards(), self.metric.queue(), self.metric.delay(), self.metric.throughput())
-            self.logger.info("step:{}/{}, q_loss:{}, rewards:{}, queue:{}, delay:{}, throughput:{}".format(i, self.steps,\
-                mean_loss, self.metric.rewards(), self.metric.queue(), self.metric.delay(), int(self.metric.throughput())))
-            if e % self.save_rate == 0:
+            should_log_train = (e % self.train_log_interval == 0) or (e == self.episodes - 1)
+            if should_log_train:
+                travel_time = self.metric.real_average_travel_time()
+                mean_reward = self.metric.rewards()
+                mean_queue = self.metric.queue()
+                mean_delay = self.metric.delay()
+                throughput = self.metric.throughput()
+                self.writeLog("TRAIN", e, travel_time, mean_loss, mean_reward, mean_queue, mean_delay, throughput)
+                self.logger.info(
+                    "step:{}/{}, q_loss:{}, rewards:{}, queue:{}, delay:{}, throughput:{}".format(
+                        i, self.steps, mean_loss, mean_reward, mean_queue, mean_delay, int(throughput)
+                    )
+                )
+                self.logger.info("episode:{}/{}, real avg travel time:{}".format(e, self.episodes, travel_time))
+            if self.save_rate > 0 and e % self.save_rate == 0:
                 [ag.save_model(e=e) for ag in self.agents]
-            self.logger.info("episode:{}/{}, real avg travel time:{}".format(e, self.episodes, self.metric.real_average_travel_time()))
-            for j in range(len(self.world.intersections)):
-                self.logger.debug("intersection:{}, mean_episode_reward:{}, mean_queue:{}".format(j, self.metric.lane_rewards()[j],\
-                     self.metric.lane_queue()[j]))
+            if should_log_train and self.logger.isEnabledFor(logging.DEBUG):
+                lane_rewards = self.metric.lane_rewards()
+                lane_queues = self.metric.lane_queue()
+                for j in range(len(self.world.intersections)):
+                    self.logger.debug(
+                        "intersection:{}, mean_episode_reward:{}, mean_queue:{}".format(
+                            j, lane_rewards[j], lane_queues[j]
+                        )
+                    )
             if self.test_when_train and e % self.test_interval == 0:
                 test_travel_time = self.train_test(e, mean_loss)
                 if test_travel_time + 1e-6 < self.best_test_travel_time:

@@ -18,11 +18,16 @@ model:
   adam_eps: 0.00001
   gamma: 0.99
   gae_lambda: 0.95
+  policy_objective: ppo         # ppo | spo
   clip_eps: 0.2
+  spo_eps: 0.2                  # SPO probability-ratio hyperparameter; defaults to clip_eps
   clip_vf: 0.2
   entropy_coef: 0.01
   value_coef: 0.5
   reward_scale: 0.05
+  reward_mode: queue_pressure   # queue | pressure_abs | queue_pressure
+  pressure_balance_coef: 0.2     # queue_pressure: penalty weight for abs(in_count - out_count)
+  pressure_release_coef: 0.0    # bonus for reducing abs pressure; set 0.0 to disable
   grad_clip: 0.5
 
   ppo_epochs: 4
@@ -42,15 +47,20 @@ model:
   hypernet_type: mlp              # mlp | linear
   actor_hypernet_type: mlp        # mlp | linear
   value_hypernet_type: mlp        # mlp | linear
+  
+# hyper output part CLOSED
   hyper_head_mode: flat           # flat is the stable pre-RF baseline; layerwise is paper-style ablation
   hyper_use_bias: True
   hyper_head_init_gain: 1.0
+
+# rf init CLOSED
   hyper_rf_init: False            # RF is off for the stable pre-RF baseline
   hyper_rf_mode: fan_in           # fan_in | fan_out | fan_avg
   hyper_rf_hidden_gain: 1.41421356237
   hyper_rf_actor_output_gain: 0.01
   hyper_rf_value_output_gain: 1.0
   hyper_rf_bias_scale: 1.0
+
   hyper_hidden: [64]
   value_hyper_hidden: [64]
   hyper_dropout: 0.0
@@ -66,15 +76,15 @@ trainer:
   steps: 3600
   test_steps: 3600
   action_interval: 10
-  episodes: 200
+  episodes: 250
   update_model_rate: 1
   update_target_rate: 1
   test_when_train: True
   test_interval: 5
-  early_stop_patience: 8
+  early_stop_patience: 0
   load_best_for_test: True
 
 
 logger:
-  save_rate: 20
+  save_rate: 200   # model save rate
   attention: False

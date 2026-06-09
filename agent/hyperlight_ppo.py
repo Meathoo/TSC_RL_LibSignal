@@ -60,11 +60,29 @@ class HyperLightPPOAgent(RLAgent):
         self.gamma = float(cfg.get('gamma', 0.99))
         self.gae_lambda = float(cfg.get('gae_lambda', 0.95))
         self.clip_eps = float(cfg.get('clip_eps', 0.2))
+        self.policy_objective = str(cfg.get('policy_objective', cfg.get('ppo_objective', 'ppo'))).lower()
+        if self.policy_objective not in ('ppo', 'spo'):
+            raise ValueError(f"Unknown HyperLight PPO policy_objective: {self.policy_objective}")
+        self.spo_eps = float(cfg.get('spo_eps', self.clip_eps))
+        if self.spo_eps <= 0.0:
+            raise ValueError('spo_eps must be positive')
         self.clip_vf = cfg.get('clip_vf', 0.2)
         self.clip_vf = None if self.clip_vf is None else float(self.clip_vf)
         self.entropy_coef = float(cfg.get('entropy_coef', cfg.get('ent_coef', 0.01)))
         self.value_coef = float(cfg.get('value_coef', cfg.get('vf_coef', 0.5)))
         self.reward_scale = float(cfg.get('reward_scale', 1.0))
+        self.reward_mode = str(cfg.get('reward_mode', 'queue')).lower()
+        reward_mode_aliases = {
+            'mean_waiting': 'queue',
+            'waiting': 'queue',
+            'mplight': 'queue',
+            'pressure': 'pressure_abs',
+        }
+        self.reward_mode = reward_mode_aliases.get(self.reward_mode, self.reward_mode)
+        if self.reward_mode not in ('queue', 'pressure_abs', 'queue_pressure'):
+            raise ValueError(f"Unknown HyperLight PPO reward_mode: {self.reward_mode}")
+        self.pressure_balance_coef = float(cfg.get('pressure_balance_coef', 0.2))
+        self.pressure_release_coef = float(cfg.get('pressure_release_coef', 0.0))
         self.grad_clip = float(cfg.get('grad_clip', 0.5))
         self.ppo_epochs = max(1, int(cfg.get('ppo_epochs', 4)))
         self.ppo_rollout_steps = max(1, int(cfg.get('ppo_rollout_steps', 360)))
@@ -197,6 +215,7 @@ class HyperLightPPOAgent(RLAgent):
         self._transitions_since_update = 0
         self._cached_action_prob = None
         self._cached_value = None
+        self._last_abs_pressure = None
 
     def __repr__(self):
         critic_type = (
@@ -208,19 +227,29 @@ class HyperLightPPOAgent(RLAgent):
             f"HyperLightPPOAgent(sub_agents={self.sub_agents}, state_dim={self.state_dim}, "
             f"action_dim={self.action_space.n}, actor_hypernet={self.hypernet_type}, "
             f"value_hypernet={self.value_hypernet_type}, hyper_heads={self.hyper_head_mode}, "
+            f"objective={self.policy_objective}, "
             f"embedding={self.embedding_mode}, activation={self.activation}, "
             f"rf_init={self.actor_rf_init_config['rf_init']}, "
+            f"reward={self.reward_mode}, "
             f"value_chunk_size={self.value_chunk_size}, "
             f"test_action={self.test_action_mode}@T={self.test_temperature:g}, "
             f"critic={critic_type}, device={self.device})"
         )
 
+    def _uses_pressure_reward(self):
+        return self.reward_mode in ('pressure_abs', 'queue_pressure')
+
     def _build_generators(self):
         self.ob_generator = []
         self.reward_generator = []
+        self.pressure_lanes = []
+        pressure_norms = []
         self.phase_generator = []
         self.queue_generator = []
         self.delay_generator = []
+
+        if self._uses_pressure_reward():
+            self.world.subscribe(['lane_count'])
 
         max_ob_length = 0
         for inter in self.world.intersections:
@@ -243,6 +272,9 @@ class HyperLightPPOAgent(RLAgent):
                     negative=True,
                 )
             )
+            in_lanes, out_lanes = self._build_pressure_lanes(inter)
+            self.pressure_lanes.append((in_lanes, out_lanes))
+            pressure_norms.append(float(max(len(in_lanes), 1)))
             self.phase_generator.append(
                 IntersectionPhaseGenerator(
                     self.world,
@@ -273,6 +305,33 @@ class HyperLightPPOAgent(RLAgent):
                 )
             )
         self.ob_length = int(max_ob_length)
+        self.pressure_norms = np.asarray(pressure_norms, dtype=np.float32)
+
+    def _lanes_for_road(self, inter, road):
+        if hasattr(inter, 'road_lane_mapping') and road in inter.road_lane_mapping:
+            return list(inter.road_lane_mapping[road])
+
+        if isinstance(road, dict):
+            road_id = road.get('id')
+            lane_count = len(road.get('lanes', []))
+            return [f'{road_id}_{idx}' for idx in range(lane_count)]
+
+        return []
+
+    def _build_pressure_lanes(self, inter):
+        in_lanes = []
+        out_lanes = []
+        for road in getattr(inter, 'in_roads', []) or []:
+            in_lanes.extend(self._lanes_for_road(inter, road))
+        for road in getattr(inter, 'out_roads', []) or []:
+            out_lanes.extend(self._lanes_for_road(inter, road))
+        return in_lanes, out_lanes
+
+    @staticmethod
+    def _lane_count_value(lane_count, lane_id):
+        if isinstance(lane_count, dict):
+            return float(lane_count.get(lane_id, 0.0))
+        return 0.0
 
     def _build_action_mask(self):
         mask = torch.zeros((self.sub_agents, self.action_space.n), dtype=torch.bool)
@@ -404,6 +463,7 @@ class HyperLightPPOAgent(RLAgent):
         self._build_generators()
         self._cached_action_prob = None
         self._cached_value = None
+        self._last_abs_pressure = None
 
     def get_ob(self):
         obs = []
@@ -417,11 +477,45 @@ class HyperLightPPOAgent(RLAgent):
         return np.asarray(obs, dtype=np.float32)
 
     def get_reward(self):
+        rewards = self._queue_waiting_reward()
+        if self.reward_mode == 'queue':
+            return rewards
+
+        current_abs_pressure = self._current_abs_pressure()
+        pressure_reward = -current_abs_pressure / self.pressure_norms
+        if self.reward_mode == 'pressure_abs':
+            rewards = pressure_reward
+        else:
+            rewards = rewards + self.pressure_balance_coef * pressure_reward
+
+        if self.pressure_release_coef > 0.0:
+            if self._last_abs_pressure is None:
+                release_reward = np.zeros_like(current_abs_pressure)
+            else:
+                release_reward = (self._last_abs_pressure - current_abs_pressure) / self.pressure_norms
+            rewards = rewards + self.pressure_release_coef * release_reward
+
+        self._last_abs_pressure = current_abs_pressure
+        return np.asarray(rewards, dtype=np.float32)
+
+    def _queue_waiting_reward(self):
         rewards = []
         for reward_gen in self.reward_generator:
             reward = np.asarray(reward_gen.generate(), dtype=np.float32)
             rewards.append(float(np.mean(reward)))
         return np.asarray(rewards, dtype=np.float32)
+
+    def _current_abs_pressure(self):
+        lane_count = self.world.get_info('lane_count')
+        current_abs_pressure = []
+        for in_lanes, out_lanes in self.pressure_lanes:
+            pressure = 0.0
+            for lane_id in in_lanes:
+                pressure += self._lane_count_value(lane_count, lane_id)
+            for lane_id in out_lanes:
+                pressure -= self._lane_count_value(lane_count, lane_id)
+            current_abs_pressure.append(abs(pressure))
+        return np.asarray(current_abs_pressure, dtype=np.float32)
 
     def get_phase(self):
         phase = []
@@ -597,9 +691,16 @@ class HyperLightPPOAgent(RLAgent):
                 entropy = dist.entropy().mean()
 
                 ratio = torch.exp(new_log_prob - b_old_log_prob)
-                policy_loss_1 = ratio * b_advantage
-                policy_loss_2 = torch.clamp(ratio, 1.0 - self.clip_eps, 1.0 + self.clip_eps) * b_advantage
-                policy_loss = -torch.min(policy_loss_1, policy_loss_2).mean()
+                if self.policy_objective == 'spo':
+                    policy_objective = (
+                        ratio * b_advantage
+                        - b_advantage.abs() * (ratio - 1.0).pow(2) / (2.0 * self.spo_eps)
+                    )
+                    policy_loss = -policy_objective.mean()
+                else:
+                    policy_loss_1 = ratio * b_advantage
+                    policy_loss_2 = torch.clamp(ratio, 1.0 - self.clip_eps, 1.0 + self.clip_eps) * b_advantage
+                    policy_loss = -torch.min(policy_loss_1, policy_loss_2).mean()
 
                 if self.clip_vf is not None and self.clip_vf > 0.0:
                     value_clipped = b_old_value + (values - b_old_value).clamp(-self.clip_vf, self.clip_vf)
@@ -662,6 +763,16 @@ class HyperLightMAPPOAgent(HyperLightPPOAgent):
     """
     MAPPO-style registration. The behavior is controlled by config, especially
     centralized_critic=True in configs/tsc/hyperlight_mappo.yml.
+    """
+
+    pass
+
+
+@Registry.register_model('hyperlight_maspo')
+class HyperLightMASPOAgent(HyperLightPPOAgent):
+    """
+    Multi-Agent SPO (Soft Policy Optimization) registration. The behavior is
+    controlled by config, with policy_objective=spo in configs/tsc/hyperlight_maspo.yml.
     """
 
     pass

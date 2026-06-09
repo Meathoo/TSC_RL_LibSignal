@@ -97,6 +97,22 @@ def build_config(args):
     agent_name = os.path.join('./configs', args.task, f'{args.agent}.yml')
     config, duplicates_warning = load_config(agent_name)
     config.update({'command': args.__dict__})
+    if args.seed is not None:
+        config['world']['seed'] = args.seed
+    model_overrides = {
+        'agent_embedding_mode': getattr(args, 'agent_embedding_mode', None),
+        'reward_mode': getattr(args, 'reward_mode', None),
+        'pressure_balance_coef': getattr(args, 'pressure_balance_coef', None),
+    }
+    for key, value in model_overrides.items():
+        if value is not None:
+            config['model'][key] = value
+    hypernet_type = getattr(args, 'hypernet_type', None)
+    if hypernet_type is not None:
+        config['model']['hypernet_type'] = hypernet_type
+        config['model']['actor_hypernet_type'] = hypernet_type
+        config['model']['critic_hypernet_type'] = hypernet_type
+        config['model']['value_hypernet_type'] = hypernet_type
     return config, duplicates_warning
 
 def load_config(path, previous_includes=[]):
