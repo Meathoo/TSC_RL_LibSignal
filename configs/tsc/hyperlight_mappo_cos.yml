@@ -1,0 +1,25 @@
+includes:
+  - configs/tsc/hyperlight_mappo.yml
+
+
+model:
+  name: hyperlight_mappo_cos
+  cos_enabled: True
+  cos_top_k: 16
+  cos_feature_source: state_meta
+  cos_context_dim: 128
+  cos_state_hidden: [128]
+  cos_selector_hidden: [64]
+  cos_fusion_mode: add # concat | add
+  cos_fusion_hidden: []
+  cos_policy_coef: 1.0
+  cos_entropy_coef: 0.0
+  cos_diag_coef: 0.01
+  cos_symmetry_coef: 0.01
+  cos_self_bias: 0.0
+  cos_logit_clip: 0.0
+  cos_deterministic_eval: True
+  cos_log_diagnostics: True
+
+  topology_aware_embedding: True
+  topology_hidden_dim: 64

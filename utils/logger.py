@@ -94,19 +94,88 @@ def build_config(args):
     position args:
     -args: command line arguments take in from run.py
     """
-    agent_name = os.path.join('./configs', args.task, f'{args.agent}.yml')
-    config, duplicates_warning = load_config(agent_name)
+    config_snapshot = getattr(args, 'config_snapshot', None)
+    if config_snapshot is not None:
+        with open(config_snapshot, 'r', encoding='utf-8') as snapshot_file:
+            saved = json.load(snapshot_file)
+        required_sections = ('model', 'trainer', 'logger', 'world')
+        missing = [section for section in required_sections if section not in saved]
+        if missing:
+            raise ValueError(
+                f"Config snapshot {config_snapshot} is missing sections: {missing}"
+            )
+        config = {
+            section: copy.deepcopy(saved[section])
+            for section in required_sections
+        }
+        duplicates_warning = {}
+    else:
+        agent_name = os.path.join('./configs', args.task, f'{args.agent}.yml')
+        config, duplicates_warning = load_config(agent_name)
     config.update({'command': args.__dict__})
     if args.seed is not None:
         config['world']['seed'] = args.seed
+    reward_mode = getattr(args, 'reward_mode', None)
+    reward_mode_aliases = {
+        'mean_waiting': 'queue',
+        'waiting': 'queue',
+        'mplight': 'queue',
+        'pressure': 'pressure_abs',
+    }
+    if reward_mode is not None:
+        reward_mode = reward_mode_aliases.get(str(reward_mode).lower(), reward_mode)
     model_overrides = {
         'agent_embedding_mode': getattr(args, 'agent_embedding_mode', None),
-        'reward_mode': getattr(args, 'reward_mode', None),
+        'hyper_actor_arch': getattr(args, 'hyper_actor_arch', None),
+        'actor_hidden1': getattr(args, 'hyper_actor_hidden1', None),
+        'actor_hidden2': getattr(args, 'hyper_actor_hidden2', None),
+        'hyper_adapter_mode': getattr(args, 'hyper_adapter_mode', None),
+        'hyper_critic_adapter_mode': getattr(args, 'hyper_critic_adapter_mode', None),
+        'hyper_film_scale': getattr(args, 'hyper_film_scale', None),
+        'reward_mode': reward_mode,
         'pressure_balance_coef': getattr(args, 'pressure_balance_coef', None),
+        'native_use_agent_id': getattr(args, 'native_use_agent_id', None),
+        'native_agent_id_mode': getattr(args, 'native_agent_id_mode', None),
+        'native_actor_arch': getattr(args, 'native_actor_arch', None),
+        'native_value_arch': getattr(args, 'native_value_arch', None),
+        'iru_steps': getattr(args, 'iru_steps', None),
+        'iru_actor_steps': getattr(args, 'iru_actor_steps', None),
+        'iru_value_steps': getattr(args, 'iru_value_steps', None),
+        'iru_hidden_dim': getattr(args, 'iru_hidden_dim', None),
+        'iru_num_blocks': getattr(args, 'iru_num_blocks', None),
+        'profile_performance': getattr(args, 'profile_performance', None),
+        'hyper_residual': getattr(args, 'hyper_residual', None),
+        'hyper_residual_mode': getattr(args, 'hyper_residual_mode', None),
+        'hyper_residual_scale': getattr(args, 'hyper_residual_scale', None),
+        'hyper_residual_actor_scale': getattr(args, 'hyper_residual_actor_scale', None),
+        'hyper_residual_value_scale': getattr(args, 'hyper_residual_value_scale', None),
+        'hyper_lora_rank': getattr(args, 'hyper_lora_rank', None),
+        'hyper_lora_actor_rank': getattr(args, 'hyper_lora_actor_rank', None),
+        'hyper_lora_value_rank': getattr(args, 'hyper_lora_value_rank', None),
+        'hyper_lora_bias': getattr(args, 'hyper_lora_bias', None),
+        'hyper_head_mode': getattr(args, 'hyper_head_mode', None),
+        'hyper_chunk_size': getattr(args, 'hyper_chunk_size', None),
+        'hyper_chunk_embed_dim': getattr(args, 'hyper_chunk_embed_dim', None),
     }
     for key, value in model_overrides.items():
         if value is not None:
             config['model'][key] = value
+    trainer_overrides = {
+        'episodes': getattr(args, 'episodes', None),
+        'resume_episode': getattr(args, 'resume_episode', None),
+    }
+    for key, value in trainer_overrides.items():
+        if value is not None:
+            config['trainer'][key] = value
+    save_rate = getattr(args, 'save_rate', None)
+    if save_rate is not None:
+        config['logger']['save_rate'] = save_rate
+    iru_steps = getattr(args, 'iru_steps', None)
+    if iru_steps is not None:
+        if getattr(args, 'iru_actor_steps', None) is None:
+            config['model']['iru_actor_steps'] = iru_steps
+        if getattr(args, 'iru_value_steps', None) is None:
+            config['model']['iru_value_steps'] = iru_steps
     hypernet_type = getattr(args, 'hypernet_type', None)
     if hypernet_type is not None:
         config['model']['hypernet_type'] = hypernet_type

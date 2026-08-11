@@ -343,6 +343,141 @@ class LayerwiseHyperNetwork(nn.Module):
         return torch.cat(chunks, dim=-1)
 
 
+class ChunkedHyperNetwork(nn.Module):
+    """
+    Ha et al. style chunked generator for flattened target-network parameters.
+
+    A flat head spends ``hidden_dim * N_theta`` parameters because it gives every
+    generated scalar its own row. This generator still emits *every* target
+    weight, but each target layer is produced in row-blocks by one shared
+    generator conditioned on a learnable chunk embedding, so the cost drops to
+    roughly ``hidden_dim * chunk_size * in_dim`` per layer.
+
+    The generator is weight-shared across the chunks of a layer, which is a
+    genuine inductive bias: the same function maps the meta vector to every
+    row-block, differing only through the chunk code. It is far weaker than the
+    bounded FiLM/head adapters, which cannot emit a full weight matrix at all.
+    """
+
+    def __init__(
+        self,
+        input_dim,
+        hidden_dims,
+        output_dim,
+        target_layout,
+        hypernet_type='mlp',
+        dropout=0.0,
+        use_bias=True,
+        head_init_gain=1.0,
+        chunk_size=8,
+        chunk_embed_dim=16,
+        rf_init=False,
+        rf_mode='fan_in',
+        rf_hidden_gain=math.sqrt(2.0),
+        rf_output_gain=1.0,
+    ):
+        super().__init__()
+        self.output_dim = int(output_dim)
+        self.target_layout = LayerwiseHyperNetwork._normalize_layout(target_layout)
+        if len(self.target_layout) == 0:
+            raise ValueError('ChunkedHyperNetwork requires a target_layout')
+
+        chunk_size = int(chunk_size)
+        chunk_embed_dim = int(chunk_embed_dim)
+        if chunk_size <= 0:
+            raise ValueError('hyper_chunk_size must be positive')
+        if chunk_embed_dim <= 0:
+            raise ValueError('hyper_chunk_embed_dim must be positive')
+        self.chunk_embed_dim = chunk_embed_dim
+
+        kind = str(hypernet_type or 'mlp').lower()
+        if kind not in ('linear', 'lin', 'mlp', 'nonlinear'):
+            raise ValueError(f"Unknown hypernetwork type: {hypernet_type}")
+        self.hypernet_type = kind
+
+        hidden = list(hidden_dims or [])
+        if kind in ('linear', 'lin') or not hidden:
+            self.trunk = nn.Identity()
+            trunk_dim = int(input_dim)
+        else:
+            layers = []
+            dims = [int(input_dim)] + [int(dim) for dim in hidden]
+            for idx in range(len(dims) - 1):
+                layers.append(nn.Linear(dims[idx], dims[idx + 1], bias=use_bias))
+                layers.append(nn.ReLU())
+                if dropout > 0.0:
+                    layers.append(nn.Dropout(dropout))
+            self.trunk = nn.Sequential(*layers)
+            trunk_dim = dims[-1]
+        self.trunk_dim = trunk_dim
+
+        self.chunk_embeddings = nn.ParameterList()
+        self.generators = nn.ModuleList()
+        self.chunk_specs = []
+        layer_count = len(self.target_layout)
+
+        for layer_idx, (_, (out_dim, in_dim), _, _, _) in enumerate(self.target_layout):
+            out_dim = int(out_dim)
+            in_dim = int(in_dim)
+            rows = min(chunk_size, out_dim)
+            n_chunks = (out_dim + rows - 1) // rows
+            gen_out = rows * in_dim + rows
+
+            embedding = nn.Parameter(torch.empty(n_chunks, chunk_embed_dim))
+            nn.init.normal_(embedding, mean=0.0, std=1.0)
+            generator = nn.Linear(trunk_dim + chunk_embed_dim, gen_out, bias=use_bias)
+
+            init_gain = float(head_init_gain)
+            if rf_init:
+                init_gain = float(
+                    rf_output_gain if layer_idx == layer_count - 1 else rf_hidden_gain
+                )
+                self._init_rf_generator(generator, rows, in_dim, init_gain)
+
+            self.chunk_embeddings.append(embedding)
+            self.generators.append(generator)
+            self.chunk_specs.append((out_dim, in_dim, rows, n_chunks))
+
+        expected_dim = int(self.target_layout[-1][-1])
+        if expected_dim != self.output_dim:
+            raise ValueError(
+                f"Chunked layout output_dim mismatch: layout={expected_dim}, "
+                f"output_dim={self.output_dim}"
+            )
+
+    @staticmethod
+    def _init_rf_generator(generator, rows, in_dim, gain):
+        """Put a correctly scaled target-layer init in the bias, deviations in the weight."""
+        with torch.no_grad():
+            default_weight = generator.weight.new_empty(rows, in_dim)
+            nn.init.orthogonal_(default_weight, gain=float(gain))
+            nn.init.orthogonal_(generator.weight, gain=float(gain) / math.sqrt(max(1.0, float(in_dim))))
+            if generator.bias is not None:
+                generator.bias.zero_()
+                generator.bias[: rows * in_dim].copy_(default_weight.reshape(-1))
+
+    def forward(self, x):
+        hidden = self.trunk(x)
+        chunks = []
+        for embedding, generator, (out_dim, in_dim, rows, n_chunks) in zip(
+            self.chunk_embeddings, self.generators, self.chunk_specs
+        ):
+            expanded = hidden.unsqueeze(-2).expand(*hidden.shape[:-1], n_chunks, self.trunk_dim)
+            codes = embedding.expand(*hidden.shape[:-1], n_chunks, self.chunk_embed_dim)
+            generated = generator(torch.cat([expanded, codes], dim=-1))
+
+            weight_part = generated[..., : rows * in_dim]
+            bias_part = generated[..., rows * in_dim :]
+
+            weight = weight_part.reshape(*hidden.shape[:-1], n_chunks * rows, in_dim)
+            weight = weight[..., :out_dim, :].reshape(*hidden.shape[:-1], out_dim * in_dim)
+            bias = bias_part.reshape(*hidden.shape[:-1], n_chunks * rows)[..., :out_dim]
+
+            chunks.append(weight)
+            chunks.append(bias)
+        return torch.cat(chunks, dim=-1)
+
+
 class HyperNetwork(MLPHyperNetwork):
     """
     Backward-compatible name for the original MLP hypernetwork.
@@ -363,6 +498,8 @@ def build_hypernetwork(
     rf_mode='fan_in',
     rf_hidden_gain=math.sqrt(2.0),
     rf_output_gain=1.0,
+    chunk_size=8,
+    chunk_embed_dim=16,
 ):
     """
     Build a linear or MLP hypernetwork from config.
@@ -370,6 +507,23 @@ def build_hypernetwork(
 
     kind = str(hypernet_type or 'mlp').lower()
     mode = str(head_mode or 'flat').lower()
+    if mode in ('chunked', 'chunk', 'factorized'):
+        return ChunkedHyperNetwork(
+            input_dim,
+            hidden_dims,
+            output_dim,
+            target_layout=target_layout,
+            hypernet_type=kind,
+            dropout=dropout,
+            use_bias=use_bias,
+            head_init_gain=head_init_gain,
+            chunk_size=chunk_size,
+            chunk_embed_dim=chunk_embed_dim,
+            rf_init=rf_init,
+            rf_mode=rf_mode,
+            rf_hidden_gain=rf_hidden_gain,
+            rf_output_gain=rf_output_gain,
+        )
     if mode in ('layerwise', 'headed', 'official'):
         return LayerwiseHyperNetwork(
             input_dim,

@@ -1,0 +1,15 @@
+includes:
+  - configs/tsc/mappo.yml
+
+
+model:
+  # Pure shared-MLP MAPPO with obs + learned intersection embedding.
+  # This is the non-hypernetwork control for HyperLight-MAPPO learned embeddings.
+  name: native_mappo_learned
+  native_use_agent_id: True
+  native_agent_id_mode: learned    # one_hot | learned
+  native_agent_embedding_dim: 64
+
+
+trainer:
+  early_stop_patience: 0

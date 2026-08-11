@@ -1,0 +1,37 @@
+includes:
+  - configs/tsc/hyperlight_mappo.yml
+
+
+model:
+  name: hyperlight_graph_mappo
+
+  # Local actor input: variable-size lane-link movements with a real padding mask.
+  movement_encoder_enabled: True
+  movement_token_dim: 64
+  movement_encoder_dim: 64
+  movement_encoder_heads: 4
+  movement_encoder_layers: 1
+  movement_encoder_ff_dim: 128
+
+  # Centralized training: static CityFlow road directions are preserved.
+  centralized_critic: True
+  centralized_critic_mode: graph
+  graph_critic_hidden_dim: 128
+  graph_critic_layers: 2
+  graph_critic_heads: 4
+  graph_critic_use_edge_weight: False
+  graph_critic_global_pool: True
+  graph_message_direction: downstream_to_upstream
+
+  # The graph critic and actor both use small meta-conditioned FiLM adapters.
+  agent_embedding_mode: learned_topology
+  agent_embedding_dim: 64
+  hyper_adapter_mode: film
+  hyper_film_scale: 0.1
+  hyper_film_init_zero: True
+  graph_critic_film: True
+  graph_critic_film_hidden: [64]
+  graph_critic_film_scale: 0.1
+
+  # FiLM and LoRA/full residual generation are alternate ablations.
+  hyper_residual: False

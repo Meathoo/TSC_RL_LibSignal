@@ -38,14 +38,90 @@ parser.add_argument('-a', '--agent', type=str, default="dqn", help="agent type o
 parser.add_argument('-w', '--world', type=str, default="cityflow", choices=['cityflow','sumo'], help="simulator type")
 parser.add_argument('-n', '--network', type=str, default="cityflow1x1", help="network name")
 parser.add_argument('-d', '--dataset', type=str, default='onfly', help='type of dataset in training process')
-parser.add_argument('--agent_embedding_mode', type=str, default=None, choices=['one_hot', 'learned'],
-                    help='override model.agent_embedding_mode')
+parser.add_argument(
+    '--agent_embedding_mode',
+    type=str,
+    default=None,
+    choices=['one_hot', 'learned', 'topology', 'learned_topology', 'one_hot_topology'],
+    help='override model.agent_embedding_mode',
+)
 parser.add_argument('--hypernet_type', type=str, default=None, choices=['mlp', 'linear'],
                     help='override model hypernetwork type')
-parser.add_argument('--reward_mode', type=str, default=None, choices=['queue', 'pressure_abs', 'queue_pressure'],
+parser.add_argument('--hyper_actor_arch', type=str, default=None, choices=['mlp', 'iru'],
+                    help='override model.hyper_actor_arch')
+parser.add_argument('--hyper_actor_hidden1', type=int, default=None,
+                    help='override model.actor_hidden1 for HyperLight MLP controls')
+parser.add_argument('--hyper_actor_hidden2', type=int, default=None,
+                    help='override model.actor_hidden2 for HyperLight MLP controls')
+parser.add_argument('--hyper_adapter_mode', type=str, default=None,
+                    choices=['generated', 'film', 'none'],
+                    help='override actor adaptation: generated weights, FiLM, or shared actor')
+parser.add_argument('--hyper_critic_adapter_mode', type=str, default=None,
+                    choices=['generated', 'film'],
+                    help='override critic adaptation: generated weights or shared critic with FiLM')
+parser.add_argument('--hyper_film_scale', type=float, default=None,
+                    help='override model.hyper_film_scale')
+parser.add_argument('--reward_mode', type=str, default=None,
+                    choices=['queue', 'pressure_abs', 'queue_pressure', 'pressure', 'waiting', 'mean_waiting', 'mplight'],
                     help='override model.reward_mode')
 parser.add_argument('--pressure_balance_coef', type=float, default=None,
                     help='override model.pressure_balance_coef')
+parser.add_argument('--native_use_agent_id', type=str2bool, nargs='?', const=True, default=None,
+                    help='override model.native_use_agent_id')
+parser.add_argument('--native_agent_id_mode', type=str, default=None,
+                    choices=['one_hot', 'learned'],
+                    help='override model.native_agent_id_mode')
+parser.add_argument('--native_actor_arch', type=str, default=None, choices=['mlp', 'iru'],
+                    help='override model.native_actor_arch')
+parser.add_argument('--native_value_arch', type=str, default=None, choices=['mlp', 'iru'],
+                    help='override model.native_value_arch')
+parser.add_argument('--iru_steps', type=int, default=None,
+                    help='override both model.iru_actor_steps and model.iru_value_steps')
+parser.add_argument('--iru_actor_steps', type=int, default=None,
+                    help='override model.iru_actor_steps')
+parser.add_argument('--iru_value_steps', type=int, default=None,
+                    help='override model.iru_value_steps')
+parser.add_argument('--iru_hidden_dim', type=int, default=None,
+                    help='override model.iru_hidden_dim')
+parser.add_argument('--iru_num_blocks', type=int, default=None,
+                    help='override model.iru_num_blocks')
+parser.add_argument('--profile_performance', type=str2bool, nargs='?', const=True, default=None,
+                    help='record parameter count, latency, update time, and peak GPU memory')
+parser.add_argument('--episodes', type=int, default=None,
+                    help='override trainer.episodes (the final episode boundary)')
+parser.add_argument('--resume_episode', type=int, default=None,
+                    help='load model/<episode>_<rank>.pt before training and continue from this episode')
+parser.add_argument('--config_snapshot', type=str, default=None,
+                    help='rebuild model/trainer/logger/world settings from a saved hyperparameters.json')
+parser.add_argument('--hyper_residual', type=str2bool, nargs='?', const=True, default=None,
+                    help='override model.hyper_residual')
+parser.add_argument('--hyper_residual_mode', type=str, default=None,
+                    choices=['full', 'lora', 'low_rank', 'low-rank', 'head', 'head_only', 'head-only',
+                             'last_layer', 'last-layer'],
+                    help='override model.hyper_residual_mode')
+parser.add_argument('--hyper_residual_scale', type=float, default=None,
+                    help='override model.hyper_residual_scale')
+parser.add_argument('--hyper_residual_actor_scale', type=float, default=None,
+                    help='override model.hyper_residual_actor_scale')
+parser.add_argument('--hyper_residual_value_scale', type=float, default=None,
+                    help='override model.hyper_residual_value_scale')
+parser.add_argument('--hyper_lora_rank', type=int, default=None,
+                    help='override model.hyper_lora_rank')
+parser.add_argument('--hyper_lora_actor_rank', type=int, default=None,
+                    help='override model.hyper_lora_actor_rank')
+parser.add_argument('--hyper_lora_value_rank', type=int, default=None,
+                    help='override model.hyper_lora_value_rank')
+parser.add_argument('--hyper_lora_bias', type=str2bool, nargs='?', const=True, default=None,
+                    help='override model.hyper_lora_bias')
+parser.add_argument('--hyper_head_mode', type=str, default=None,
+                    choices=['flat', 'layerwise', 'chunked'],
+                    help='override model.hyper_head_mode')
+parser.add_argument('--hyper_chunk_size', type=int, default=None,
+                    help='override model.hyper_chunk_size (chunked head only)')
+parser.add_argument('--hyper_chunk_embed_dim', type=int, default=None,
+                    help='override model.hyper_chunk_embed_dim (chunked head only)')
+parser.add_argument('--save_rate', type=int, default=None,
+                    help='override logger.save_rate (checkpoint every N episodes)')
 
 args = parser.parse_args()
 os.environ["CUDA_VISIBLE_DEVICES"] = args.ngpu

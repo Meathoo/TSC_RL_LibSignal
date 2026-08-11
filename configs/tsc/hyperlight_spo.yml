@@ -3,7 +3,7 @@ includes:
 
 
 model:
-  name: hyperlight_ppo
+  name: hyperlight_spo
   policy_objective: spo
   spo_eps: 0.3
   reward_mode: queue

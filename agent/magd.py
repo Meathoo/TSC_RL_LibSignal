@@ -308,10 +308,12 @@ class MAGDAgent(RLAgent):
                                     'model_p', f'{e}_{self.rank}.pt')
         model_q_name = os.path.join(Registry.mapping['logger_mapping']['path'].path,
                                     'model_q', f'{e}_{self.rank}.pt')
-        self.model_q = self._build_model(self.q_length, 1)
-        self.model_p = self._build_model(self.ob_length, self.action_space.n)
-        self.model_q.load_state_dict(torch.load(model_q_name))
-        self.model_p.load_state_dict(torch.load(model_p_name))
+        self.q_model.load_state_dict(
+            torch.load(model_q_name, map_location='cpu', weights_only=True)
+        )
+        self.p_model.load_state_dict(
+            torch.load(model_p_name, map_location='cpu', weights_only=True)
+        )
         self.sync_network()
 
     def save_model(self, e):
@@ -331,8 +333,12 @@ class MAGDAgent(RLAgent):
                                     'model_p', f'{self.best_epoch}_{self.rank}.pt')
         model_q_name = os.path.join(Registry.mapping['logger_mapping']['path'].path,
                                     'model_q', f'{self.best_epoch}_{self.rank}.pt')
-        self.q_model.load_state_dict(torch.load(model_q_name))
-        self.p_model.load_state_dict(torch.load(model_p_name))
+        self.q_model.load_state_dict(
+            torch.load(model_q_name, map_location='cpu', weights_only=True)
+        )
+        self.p_model.load_state_dict(
+            torch.load(model_p_name, map_location='cpu', weights_only=True)
+        )
         self.sync_network()
 
 

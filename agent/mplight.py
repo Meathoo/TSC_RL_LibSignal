@@ -479,9 +479,17 @@ class MPLightAgent(RLAgent):
         model_name = os.path.join(Registry.mapping['logger_mapping']['path'].path,
                                   'model', f'{e}_{self.rank}.pt')
         self.agents_iner = self._build_model()
-        # self.agents_iner.load_state_dict(torch.load(model_name))
-        tmp_dict = {}
-        tmp_dict.load_state_dict(torch.load(model_name))
+        checkpoint = torch.load(model_name, map_location='cpu', weights_only=True)
+        if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+            self.model.load_state_dict(checkpoint['model_state_dict'])
+            optimizer_state = checkpoint.get('optimizer_state_dict')
+            if optimizer_state is not None:
+                self.optimizer.load_state_dict(optimizer_state)
+        else:
+            # Backward compatibility with checkpoints that contain only the
+            # model state dict.
+            self.model.load_state_dict(checkpoint)
+        self.agents_iner.sync_target_network()
 
     def save_model(self, e):
         '''
@@ -492,10 +500,8 @@ class MPLightAgent(RLAgent):
         :return: None
         '''
         path = os.path.join(Registry.mapping['logger_mapping']['path'].path, 'model')
-        if not os.path.exists(path):
-            os.makedirs(path)
+        os.makedirs(path, exist_ok=True)
         model_name = os.path.join(path, f'{e}_{self.rank}.pt')
-        # torch.save(self.target_model.state_dict(), model_name)
         torch.save({
             'model_state_dict': self.model.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),

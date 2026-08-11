@@ -2,6 +2,7 @@
 import glob
 import os
 import csv
+import math
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
@@ -41,8 +42,7 @@ INPUT_PATHS = [
     "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow7x28/seed0_learned64_mlp_queue_ep250/logger/2026_05_31-19_10_31_DTL.log",
     "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow7x28/seed1_learned64_mlp_queue_ep250/logger/2026_06_05-09_31_00_DTL.log",
     "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow7x28/seed2_learned64_mlp_queue_ep250/logger/2026_06_05-20_10_30_DTL.log",
-    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow7x28/seed0_learned64_mlp_queuePress01_ep250/logger/2026_06_03-19_13_27_DTL.log",
-    # "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow7x28/seed1_learned64_mlp_queuePress01_ep250/logger/2026_06_04-07_07_22_DTL.log",
+# ---
     "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow7x28/seed0_learned64_mlp_queuePress02_ep250/logger/2026_06_02-18_53_47_DTL.log",
     "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow7x28/seed1_learned64_mlp_queuePress02_ep250/logger/2026_06_04-19_14_08_DTL.log",
     "/DaRL/LibSignal/data/output_data/tsc/cityflow_hyperlight_mappo/cityflow7x28/seed2_learned64_mlp_queuePress02_ep250/logger/2026_06_08-20_58_19_DTL.log",
@@ -183,6 +183,14 @@ def load_log(path: str) -> List[Record]:
             r = parse_line(line)
             if r is not None:
                 records.append(r)
+    for metric in METRICS:
+        nonfinite_count = sum(
+            1 for record in records if not math.isfinite(metric_value(record, metric))
+        )
+        if nonfinite_count:
+            print(
+                f"[WARN] Ignoring {nonfinite_count} non-finite {metric} value(s) in {path}"
+            )
     return records
 
 
@@ -201,14 +209,17 @@ def apply_moving_average(values: List[float], window: int) -> List[float]:
     Returns:
         Smoothed values (same length as input)
     """
-    if window <= 1 or len(values) <= window:
+    if window <= 1 or len(values) < window:
         return values
-    
+
     smoothed = []
+    left = (window - 1) // 2
     for i in range(len(values)):
-        # Center window around current index when possible
-        start_idx = max(0, i - window // 2)
-        end_idx = min(len(values), i + window // 2 + 1)
+        # Shift the centered window at the edges so every smoothed point uses
+        # exactly ``window`` samples.  In particular, an even window must not
+        # silently become window + 1 samples.
+        start_idx = min(max(0, i - left), len(values) - window)
+        end_idx = start_idx + window
         window_values = values[start_idx:end_idx]
         smoothed.append(sum(window_values) / len(window_values))
     
@@ -241,8 +252,9 @@ def records_to_series(records: List[Record], mode: str, metric: str) -> Tuple[Li
         start_ep, end_ep = EPISODE_RANGE
         filtered = [r for r in filtered if start_ep <= r.episode <= end_ep]
     
-    episodes = [r.episode for r in filtered]
-    values = [metric_value(r, metric) for r in filtered]
+    finite_records = [r for r in filtered if math.isfinite(metric_value(r, metric))]
+    episodes = [r.episode for r in finite_records]
+    values = [metric_value(r, metric) for r in finite_records]
     
     # Apply moving average if enabled
     if USE_MOVING_AVERAGE and len(values) > 1:
@@ -389,18 +401,43 @@ def build_summary_csv(sources: List[Tuple[str, str, List[Record]]], mode: str, o
     os.makedirs(output_dir, exist_ok=True)
     out_file = os.path.join(output_dir, f"summary_{mode}.csv")
 
-    header = ["name", "metric", "count", "first", "last", "best", "mean"]
+    header = [
+        "name",
+        "metric",
+        "count",
+        "first",
+        "last",
+        "best",
+        "mean",
+        "episode_start",
+        "episode_end",
+        "moving_average_window",
+    ]
     with open(out_file, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(header)
 
         for label, _log_path, records in sources:
-            mode_records = [r for r in records if r.mode == mode]
-            mode_records.sort(key=lambda r: r.episode)
             for metric in METRICS:
-                vals = [metric_value(r, metric) for r in mode_records]
+                _episodes, vals = records_to_series(records, mode=mode, metric=metric)
+                episode_start = EPISODE_RANGE[0] if EPISODE_RANGE is not None else ""
+                episode_end = EPISODE_RANGE[1] if EPISODE_RANGE is not None else ""
+                ma_window = MOVING_AVERAGE_WINDOW if USE_MOVING_AVERAGE else 1
                 if not vals:
-                    writer.writerow([label, metric, 0, "", "", "", ""])
+                    writer.writerow(
+                        [
+                            label,
+                            metric,
+                            0,
+                            "",
+                            "",
+                            "",
+                            "",
+                            episode_start,
+                            episode_end,
+                            ma_window,
+                        ]
+                    )
                     continue
 
                 smaller_better = metric in {"travel_time", "loss", "queue", "delay"}
@@ -414,6 +451,9 @@ def build_summary_csv(sources: List[Tuple[str, str, List[Record]]], mode: str, o
                     vals[-1],
                     best,
                     avg,
+                    episode_start,
+                    episode_end,
+                    ma_window,
                 ])
 
     print(f"[DONE] 表格已輸出: {out_file}")

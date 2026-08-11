@@ -42,7 +42,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         description="Evaluate HyperLight best/final checkpoints on one or more seeds."
     )
 
-    parser.add_argument("--agent", default="hyperlight", help="Agent config/model name.")
+    parser.add_argument("--agent", default="hyperlight_ppo", help="Agent config/model name.")
     parser.add_argument("--task", default="tsc", help="Task name.")
     parser.add_argument("--world", default="cityflow", choices=["cityflow", "sumo"])
     parser.add_argument("--network", default="cityflow7x28", help="Target simulator config name.")
@@ -465,3 +465,6 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+# python scripts/evaluate_hyperlight.py --source-prefix hyperlight_cf2 --network cityflow7x28 --checkpoint best --seeds 0 1 2 3 4 --ngpu 0

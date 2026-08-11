@@ -273,10 +273,9 @@ class DQNAgent(RLAgent):
         '''
         model_name = os.path.join(Registry.mapping['logger_mapping']['path'].path,
                                   'model', f'{e}_{self.rank}.pt')
-        self.model = self._build_model()
-        self.model.load_state_dict(torch.load(model_name))
-        self.target_model = self._build_model()
-        self.target_model.load_state_dict(torch.load(model_name))
+        state_dict = torch.load(model_name, map_location='cpu', weights_only=True)
+        self.model.load_state_dict(state_dict)
+        self.target_model.load_state_dict(state_dict)
 
     def save_model(self, e):
         '''

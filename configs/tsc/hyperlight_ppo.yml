@@ -25,9 +25,9 @@ model:
   entropy_coef: 0.01
   value_coef: 0.5
   reward_scale: 0.05
-  reward_mode: queue_pressure   # queue | pressure_abs | queue_pressure
+  reward_mode: queue   # queue | pressure_abs | queue_pressure
   pressure_balance_coef: 0.2     # queue_pressure: penalty weight for abs(in_count - out_count)
-  pressure_release_coef: 0.0    # bonus for reducing abs pressure; set 0.0 to disable
+  pressure_release_coef: 0    # match learned64_mlp_queue_ep250 baseline
   grad_clip: 0.5
 
   ppo_epochs: 4
@@ -39,19 +39,96 @@ model:
   normalize_advantage: True
 
   activation: relu                 # relu | tanh
+  hyper_actor_arch: mlp            # mlp | iru
+  iru_hidden_dim: 64
+  iru_actor_steps: 1
+  iru_num_blocks: 1
+  iru_layer_norm: True
   centralized_critic: False
-  centralized_critic_mode: pooled # pooled | concat
-  agent_embedding_mode: learned   # one_hot | learned
+  centralized_critic_mode: pooled # pooled | concat | graph
+  agent_embedding_mode: learned   # one_hot | learned | topology | learned_topology | one_hot_topology
   agent_embedding_dim: 64         # only used when agent_embedding_mode=learned
+
+  # Optional canonical lane-link movement encoder. It is local-only for the
+  # decentralized actor; raw observations remain in the PPO rollout buffer.
+  movement_encoder_enabled: False
+  movement_token_dim: 64
+  movement_encoder_dim: 64
+  movement_encoder_heads: 4
+  movement_encoder_layers: 1
+  movement_encoder_ff_dim: 128
+  movement_encoder_dropout: 0.0
+
+  # Directed centralized critic (used when centralized_critic_mode=graph).
+  # downstream_to_upstream lets an upstream signal observe downstream spillback.
+  graph_critic_hidden_dim: 128
+  graph_critic_layers: 2
+  graph_critic_heads: 4
+  graph_critic_dropout: 0.0
+  graph_critic_use_edge_weight: False # binary edges avoid raw 1/length log-bias collapse
+  graph_critic_edge_weight_scale: 1.0
+  graph_critic_global_pool: True
+  graph_message_direction: downstream_to_upstream # downstream_to_upstream | upstream_to_downstream | bidirectional
+  graph_critic_film: True
+  graph_critic_film_hidden: [64]
+  graph_critic_film_scale: 0.1
+
+  topology_aware_embedding: False  # topology-only clean ablation vs learned64 baseline
+  topology_hidden_dim: 64         # match the topo64 ablation hidden size
+
+  # CoSLight-style collaborator selection. Off by default to preserve the
+  # HyperLight baseline; set cos_enabled=True to use top-k mean-pooled context.
+  cos_enabled: False
+  cos_top_k: 5
+  cos_feature_source: state_meta   # state | meta | state_meta
+  cos_context_dim: 128
+  cos_state_hidden: [128]
+  cos_selector_hidden: [64]
+  cos_fusion_mode: concat          # concat | add
+  cos_fusion_hidden: []
+  cos_policy_coef: 1.0
+  cos_entropy_coef: 0.0
+  cos_diag_coef: 0.01
+  cos_symmetry_coef: 0.01
+  cos_self_bias: 0.0
+  cos_logit_clip: 0.0              # 0 disables clipping
+  cos_deterministic_eval: True
+  cos_log_diagnostics: True
 
   hypernet_type: mlp              # mlp | linear
   actor_hypernet_type: mlp        # mlp | linear
   value_hypernet_type: mlp        # mlp | linear
   
 # hyper output part CLOSED
-  hyper_head_mode: flat           # flat is the stable pre-RF baseline; layerwise is paper-style ablation
+  hyper_head_mode: flat           # flat is the stable pre-RF baseline; layerwise is paper-style ablation; chunked is the Ha et al. factorized head
   hyper_use_bias: True
   hyper_head_init_gain: 1.0
+  # chunked head only: target weights are emitted in row-blocks of hyper_chunk_size
+  # by one shared generator per layer, conditioned on a learnable chunk embedding.
+  # Smaller chunk_size means more sharing and fewer parameters.
+  hyper_chunk_size: 8
+  hyper_chunk_embed_dim: 16
+
+# shared base + small hypernetwork residual delta
+  # generated: original per-intersection generated MLP weights
+  # none: one trainable shared actor (the unmodulated IRU control)
+  # film: one shared actor with embedding-conditioned activation modulation
+  hyper_adapter_mode: generated   # generated | none | film
+  # generated: original per-intersection generated critic weights
+  # film: one shared critic with embedding-conditioned hidden activations
+  hyper_critic_adapter_mode: generated # generated | film
+  hyper_film_scale: 0.1
+  hyper_film_init_zero: True       # identity FiLM at initialization
+  hyper_residual: False           # True: theta = shared_base + scale * hyper_delta(meta)
+  hyper_residual_mode: full       # full | lora | head
+  hyper_residual_scale: 0.02      # default shared scale for actor/value residual deltas
+  hyper_residual_actor_scale: null # null falls back to hyper_residual_scale
+  hyper_residual_value_scale: null
+  hyper_residual_log_diagnostics: True
+  hyper_lora_rank: 4              # used when hyper_residual_mode=lora
+  hyper_lora_actor_rank: null
+  hyper_lora_value_rank: null
+  hyper_lora_bias: False          # LoRA only adapts weights by default
 
 # rf init CLOSED
   hyper_rf_init: False            # RF is off for the stable pre-RF baseline

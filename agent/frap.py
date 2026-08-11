@@ -351,10 +351,9 @@ class FRAP_DQNAgent(RLAgent):
         '''
         model_name = os.path.join(
             Registry.mapping['logger_mapping']['path'].path, 'model', f'{e}_{self.rank}.pt')
-        self.model = FRAP(self.dic_agent_conf, self.dic_phase_expansion, self.num_actions, self.phase_pairs, self.comp_mask)
-        self.model.load_state_dict(torch.load(model_name))
-        self.target_model = FRAP(self.dic_agent_conf, self.dic_phase_expansion, self.num_actions, self.phase_pairs, self.comp_mask)
-        self.target_model.load_state_dict(torch.load(model_name))
+        state_dict = torch.load(model_name, map_location='cpu', weights_only=True)
+        self.model.load_state_dict(state_dict)
+        self.target_model.load_state_dict(state_dict)
 
     def save_model(self, e):
         '''

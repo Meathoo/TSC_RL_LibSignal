@@ -1,5 +1,6 @@
 from collections import deque
 import os
+import time
 
 import gym
 import numpy as np
@@ -11,6 +12,7 @@ from torch.distributions import Categorical
 from torch.nn.utils import clip_grad_norm_
 
 from .rl_agent import RLAgent
+from .iru import IRUNetwork
 from . import utils
 from common.registry import Registry
 from generator import IntersectionPhaseGenerator, LaneVehicleGenerator
@@ -101,7 +103,41 @@ class NativePPOAgent(RLAgent):
         if self.activation not in ('relu', 'tanh'):
             raise ValueError(f"Unknown native PPO activation: {self.activation}")
 
+        self.actor_arch = str(
+            cfg.get('native_actor_arch', cfg.get('native_network_arch', 'mlp'))
+        ).lower()
+        self.value_arch = str(
+            cfg.get('native_value_arch', cfg.get('native_network_arch', 'mlp'))
+        ).lower()
+        architecture_aliases = {
+            'shared_mlp': 'mlp',
+            'interpolation_recurrent_unit': 'iru',
+        }
+        self.actor_arch = architecture_aliases.get(self.actor_arch, self.actor_arch)
+        self.value_arch = architecture_aliases.get(self.value_arch, self.value_arch)
+        if self.actor_arch not in ('mlp', 'iru'):
+            raise ValueError(f"Unknown native actor architecture: {self.actor_arch}")
+        if self.value_arch not in ('mlp', 'iru'):
+            raise ValueError(f"Unknown native value architecture: {self.value_arch}")
+
+        self.iru_hidden_dim = int(cfg.get('iru_hidden_dim', 64))
+        self.iru_actor_hidden_dim = int(cfg.get('iru_actor_hidden_dim', self.iru_hidden_dim))
+        self.iru_value_hidden_dim = int(cfg.get('iru_value_hidden_dim', self.iru_hidden_dim))
+        self.iru_num_blocks = int(cfg.get('iru_num_blocks', 1))
+        self.iru_layer_norm = bool(cfg.get('iru_layer_norm', True))
+        default_iru_steps = int(cfg.get('iru_steps', 5))
+        self.iru_actor_steps = int(cfg.get('iru_actor_steps', default_iru_steps))
+        self.iru_value_steps = int(cfg.get('iru_value_steps', default_iru_steps))
+        self.profile_performance = bool(cfg.get('profile_performance', False))
+
         self.use_agent_id = bool(cfg.get('native_use_agent_id', cfg.get('use_agent_id', True)))
+        self.agent_id_mode = str(
+            cfg.get('native_agent_id_mode', cfg.get('agent_id_mode', 'one_hot'))
+        ).lower()
+        if self.agent_id_mode in ('embedding', 'learnable'):
+            self.agent_id_mode = 'learned'
+        if self.agent_id_mode not in ('one_hot', 'learned'):
+            raise ValueError(f"Unknown native agent id mode: {self.agent_id_mode}")
 
         self.actor_hidden1 = int(cfg.get('actor_hidden1', 64))
         self.actor_hidden2 = int(cfg.get('actor_hidden2', 64))
@@ -120,7 +156,12 @@ class NativePPOAgent(RLAgent):
         if self.phase:
             self.state_dim += self.action_space.n if self.one_hot else 1
 
-        self.agent_id_dim = self.sub_agents if self.use_agent_id else 0
+        if self.use_agent_id and self.agent_id_mode == 'learned':
+            self.agent_id_dim = int(
+                cfg.get('native_agent_embedding_dim', cfg.get('agent_embedding_dim', 64))
+            )
+        else:
+            self.agent_id_dim = self.sub_agents if self.use_agent_id else 0
         self.policy_input_dim = self.state_dim + self.agent_id_dim
         if not self.centralized_critic:
             self.value_input_dim = self.state_dim + self.agent_id_dim
@@ -133,22 +174,47 @@ class NativePPOAgent(RLAgent):
 
         self.action_mask = self._build_action_mask().to(self.device)
         self.agent_id_eye = torch.eye(self.sub_agents, dtype=torch.float32, device=self.device)
+        self.agent_embeddings = None
+        if self.use_agent_id and self.agent_id_mode == 'learned':
+            self.agent_embeddings = nn.Embedding(self.sub_agents, self.agent_id_dim).to(self.device)
+            nn.init.orthogonal_(self.agent_embeddings.weight)
 
-        self.actor = SharedMLP(
-            self.policy_input_dim,
-            self.actor_hidden,
-            self.action_space.n,
-            activation=self.activation,
-        ).to(self.device)
-        self.value = SharedMLP(
-            self.value_input_dim,
-            self.value_hidden,
-            1,
-            activation=self.activation,
-        ).to(self.device)
+        if self.actor_arch == 'iru':
+            self.actor = IRUNetwork(
+                self.policy_input_dim,
+                self.iru_actor_hidden_dim,
+                self.action_space.n,
+                thinking_steps=self.iru_actor_steps,
+                num_blocks=self.iru_num_blocks,
+                layer_norm=self.iru_layer_norm,
+            ).to(self.device)
+        else:
+            self.actor = SharedMLP(
+                self.policy_input_dim,
+                self.actor_hidden,
+                self.action_space.n,
+                activation=self.activation,
+            ).to(self.device)
+
+        if self.value_arch == 'iru':
+            self.value = IRUNetwork(
+                self.value_input_dim,
+                self.iru_value_hidden_dim,
+                1,
+                thinking_steps=self.iru_value_steps,
+                num_blocks=self.iru_num_blocks,
+                layer_norm=self.iru_layer_norm,
+            ).to(self.device)
+        else:
+            self.value = SharedMLP(
+                self.value_input_dim,
+                self.value_hidden,
+                1,
+                activation=self.activation,
+            ).to(self.device)
 
         self.optimizer = optim.Adam(
-            list(self.actor.parameters()) + list(self.value.parameters()),
+            self._optimizer_parameters(),
             lr=float(cfg.get('learning_rate', 3e-4)),
             eps=float(cfg.get('adam_eps', 1e-5)),
         )
@@ -159,6 +225,7 @@ class NativePPOAgent(RLAgent):
         self._transitions_since_update = 0
         self._cached_action_prob = None
         self._cached_value = None
+        self._reset_performance_diagnostics()
 
     def __repr__(self):
         critic_type = (
@@ -168,8 +235,12 @@ class NativePPOAgent(RLAgent):
         )
         return (
             f"NativePPOAgent(sub_agents={self.sub_agents}, state_dim={self.state_dim}, "
-            f"action_dim={self.action_space.n}, actor_hidden={self.actor_hidden}, "
-            f"value_hidden={self.value_hidden}, agent_id={self.use_agent_id}, "
+            f"action_dim={self.action_space.n}, actor={self.actor_arch}, value={self.value_arch}, "
+            f"actor_hidden={self.actor_hidden}, value_hidden={self.value_hidden}, "
+            f"iru={self.iru_actor_steps}/{self.iru_value_steps}x{self.iru_num_blocks}"
+            f"@{self.iru_actor_hidden_dim}/{self.iru_value_hidden_dim}, "
+            f"params={self._parameter_counts()['parameter_count']}, "
+            f"agent_id={self.use_agent_id}/{self.agent_id_mode}, "
             f"critic={critic_type}, test_action={self.test_action_mode}@T={self.test_temperature:g}, "
             f"device={self.device})"
         )
@@ -239,7 +310,90 @@ class NativePPOAgent(RLAgent):
             mask[idx, : max(1, int(phase_num))] = True
         return mask
 
+    def _synchronize_profile_device(self):
+        if self.profile_performance and self.device.type == 'cuda':
+            torch.cuda.synchronize(self.device)
+
+    def _profile_start(self):
+        if not self.profile_performance:
+            return None
+        self._synchronize_profile_device()
+        return time.perf_counter()
+
+    def _record_profile_duration(self, kind, started_at):
+        if started_at is None:
+            return
+        self._synchronize_profile_device()
+        duration = time.perf_counter() - started_at
+        if kind == 'decision':
+            self._decision_time_seconds += duration
+            self._decision_count += 1
+        elif kind == 'update':
+            self._update_time_seconds += duration
+            self._update_count += 1
+        else:
+            raise ValueError(f"Unknown performance profile kind: {kind}")
+
+    def _reset_performance_diagnostics(self):
+        self._decision_time_seconds = 0.0
+        self._decision_count = 0
+        self._update_time_seconds = 0.0
+        self._update_count = 0
+        if self.profile_performance and self.device.type == 'cuda':
+            self._synchronize_profile_device()
+            torch.cuda.reset_peak_memory_stats(self.device)
+
+    def _parameter_counts(self):
+        actor_count = sum(param.numel() for param in self.actor.parameters())
+        value_count = sum(param.numel() for param in self.value.parameters())
+        embedding_count = 0
+        if self.agent_embeddings is not None:
+            embedding_count = sum(param.numel() for param in self.agent_embeddings.parameters())
+        return {
+            'parameter_count': int(actor_count + value_count + embedding_count),
+            'actor_parameter_count': int(actor_count),
+            'value_parameter_count': int(value_count),
+            'embedding_parameter_count': int(embedding_count),
+        }
+
+    def get_performance_diagnostics(self):
+        if not self.profile_performance:
+            return {}
+
+        diagnostics = {
+            key: float(value)
+            for key, value in self._parameter_counts().items()
+        }
+        diagnostics.update(
+            {
+                'decision_count': float(self._decision_count),
+                'decision_latency_ms_mean': (
+                    1000.0 * self._decision_time_seconds / max(1, self._decision_count)
+                ),
+                'decision_time_ms_total': 1000.0 * self._decision_time_seconds,
+                'update_count': float(self._update_count),
+                'update_time_ms_mean': (
+                    1000.0 * self._update_time_seconds / max(1, self._update_count)
+                ),
+                'update_time_ms_total': 1000.0 * self._update_time_seconds,
+                'gpu_peak_memory_mb': 0.0,
+                'gpu_peak_reserved_mb': 0.0,
+            }
+        )
+        if self.device.type == 'cuda':
+            diagnostics['gpu_peak_memory_mb'] = float(
+                torch.cuda.max_memory_allocated(self.device) / (1024.0 ** 2)
+            )
+            diagnostics['gpu_peak_reserved_mb'] = float(
+                torch.cuda.max_memory_reserved(self.device) / (1024.0 ** 2)
+            )
+        return diagnostics
+
     def _agent_id_features(self, batch_size):
+        if self.agent_embeddings is not None:
+            agent_idx = torch.arange(self.sub_agents, dtype=torch.long, device=self.device)
+            embeddings = self.agent_embeddings(agent_idx)
+            return embeddings.unsqueeze(0).expand(batch_size, -1, -1)
         return self.agent_id_eye.unsqueeze(0).expand(batch_size, -1, -1)
 
     def _policy_input(self, state_tensor):
@@ -310,6 +464,7 @@ class NativePPOAgent(RLAgent):
         self._build_generators()
         self._cached_action_prob = None
         self._cached_value = None
+        self._reset_performance_diagnostics()
 
     def get_ob(self):
         obs = []
@@ -356,6 +511,7 @@ class NativePPOAgent(RLAgent):
         )
 
     def get_action(self, ob, phase, test=False):
+        profile_started_at = self._profile_start()
         probs, values = self._policy_prob_from_np(ob, phase)
         self._cached_action_prob = probs
         self._cached_value = values.numpy()
@@ -363,13 +519,17 @@ class NativePPOAgent(RLAgent):
 
         if test:
             if self.test_action_mode == 'sample':
-                return self._sample_actions_from_probs(
+                actions = self._sample_actions_from_probs(
                     probs_np,
                     temperature=self.test_temperature,
                 )
-            return self._greedy_actions_from_probs(probs_np)
+            else:
+                actions = self._greedy_actions_from_probs(probs_np)
+        else:
+            actions = self._sample_actions_from_probs(probs_np)
 
-        return self._sample_actions_from_probs(probs_np)
+        self._record_profile_duration('decision', profile_started_at)
+        return actions
 
     def _greedy_actions_from_probs(self, probs_np):
         actions = []
@@ -475,6 +635,8 @@ class NativePPOAgent(RLAgent):
         if self._transitions_since_update < self.ppo_rollout_steps:
             return 0.0
 
+        profile_started_at = self._profile_start()
+
         rollout = list(self.rollout_buffer)
         self.rollout_buffer.clear()
         self._transitions_since_update = 0
@@ -527,10 +689,15 @@ class NativePPOAgent(RLAgent):
                 self.optimizer.step()
                 losses.append(float(loss.detach().cpu().item()))
 
-        return float(np.mean(losses)) if losses else 0.0
+        mean_loss = float(np.mean(losses)) if losses else 0.0
+        self._record_profile_duration('update', profile_started_at)
+        return mean_loss
 
     def _optimizer_parameters(self):
-        return list(self.actor.parameters()) + list(self.value.parameters())
+        params = list(self.actor.parameters()) + list(self.value.parameters())
+        if self.agent_embeddings is not None:
+            params += list(self.agent_embeddings.parameters())
+        return params
 
     def update_target_network(self):
         pass
@@ -545,21 +712,53 @@ class NativePPOAgent(RLAgent):
             'value': self.value.state_dict(),
             'optimizer': self.optimizer.state_dict(),
             'use_agent_id': self.use_agent_id,
+            'agent_id_mode': self.agent_id_mode,
+            'actor_arch': self.actor_arch,
+            'value_arch': self.value_arch,
+            'iru_actor_steps': self.iru_actor_steps,
+            'iru_value_steps': self.iru_value_steps,
+            'iru_num_blocks': self.iru_num_blocks,
         }
+        if self.agent_embeddings is not None:
+            payload['agent_embeddings'] = self.agent_embeddings.state_dict()
         torch.save(payload, os.path.join(model_dir, f'{e}_{self.rank}.pt'))
 
     def load_model(self, e=0):
         model_dir = os.path.join(Registry.mapping['logger_mapping']['path'].path, 'model')
         checkpoint = torch.load(os.path.join(model_dir, f'{e}_{self.rank}.pt'), map_location=self.device)
+        expected_metadata = {
+            'use_agent_id': self.use_agent_id,
+            'agent_id_mode': self.agent_id_mode,
+            'actor_arch': self.actor_arch,
+            'value_arch': self.value_arch,
+            'iru_actor_steps': self.iru_actor_steps,
+            'iru_value_steps': self.iru_value_steps,
+            'iru_num_blocks': self.iru_num_blocks,
+        }
+        mismatches = {
+            key: (checkpoint[key], expected)
+            for key, expected in expected_metadata.items()
+            if key in checkpoint and checkpoint[key] != expected
+        }
+        if mismatches:
+            details = ', '.join(
+                f'{key}=checkpoint:{actual!r}/current:{expected!r}'
+                for key, (actual, expected) in mismatches.items()
+            )
+            raise ValueError(f'Checkpoint architecture mismatch: {details}')
         self.actor.load_state_dict(checkpoint['actor'])
         self.value.load_state_dict(checkpoint['value'])
+        if self.agent_embeddings is not None and 'agent_embeddings' in checkpoint:
+            self.agent_embeddings.load_state_dict(checkpoint['agent_embeddings'])
         if 'optimizer' in checkpoint:
             self.optimizer.load_state_dict(checkpoint['optimizer'])
 
 
 @Registry.register_model('mappo')
 @Registry.register_model('native_mappo')
+@Registry.register_model('native_mappo_learned')
 @Registry.register_model('mappo_native')
+@Registry.register_model('mappo_iru')
 class NativeMAPPOAgent(NativePPOAgent):
     """
     MAPPO registration. Behavior is controlled by config, especially

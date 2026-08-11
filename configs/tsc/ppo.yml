@@ -10,7 +10,7 @@ model:
   graphic: True
 
   phase: True
-  one_hot: True
+  one_hot: True       # use one-hot encoding for the phase input. If False, use 1,2,3,4
   state_features: ["lane_count", "lane_waiting_count"]
   vehicle_max: 50
 
@@ -33,7 +33,8 @@ model:
   test_temperature: 1.0
 
   activation: relu                 # relu | tanh
-  native_use_agent_id: True        # append one-hot intersection id to shared MLP inputs
+  native_use_agent_id: False        # append one-hot intersection id to shared MLP inputs
+  native_agent_id_mode: one_hot    # one_hot | learned
 
   centralized_critic: False
   centralized_critic_mode: pooled # pooled | concat
@@ -50,7 +51,7 @@ trainer:
   steps: 3600
   test_steps: 3600
   action_interval: 10
-  episodes: 200
+  episodes: 250
   update_model_rate: 1
   update_target_rate: 1
   test_when_train: True

@@ -18,6 +18,58 @@ import torch.optim as optim
 from torch.nn.utils import clip_grad_norm_
 
 
+def _align_action_probabilities(actions, action_probabilities, action_sizes):
+    """Return replay action vectors whose argmax matches executed actions.
+
+    The actor's soft Gumbel sample is useful to the centralized critic, but it
+    is only a valid description of a transition when its selected action was
+    actually sent to the simulator.  Random exploration and stale caller data
+    therefore fall back to a one-hot vector for the executed action.
+    """
+    executed_actions = np.asarray(actions, dtype=np.int64).reshape(-1)
+    if len(executed_actions) != len(action_sizes):
+        raise ValueError(
+            "expected one action per sub-agent, got {} actions for {} sub-agents".format(
+                len(executed_actions), len(action_sizes)
+            )
+        )
+
+    aligned = []
+    for idx, (action, action_size) in enumerate(zip(executed_actions, action_sizes)):
+        action_size = int(action_size)
+        if action < 0 or action >= action_size:
+            raise ValueError(
+                "action {} is outside the valid range [0, {}) for sub-agent {}".format(
+                    action, action_size, idx
+                )
+            )
+
+        candidate = None
+        try:
+            candidate = action_probabilities[idx]
+        except (IndexError, KeyError, TypeError):
+            pass
+        if isinstance(candidate, torch.Tensor):
+            candidate = candidate.detach().cpu().numpy()
+        if candidate is not None:
+            candidate = np.asarray(candidate, dtype=np.float32).reshape(-1)
+
+        if (
+            candidate is not None
+            and candidate.shape == (action_size,)
+            and np.all(np.isfinite(candidate))
+            and int(np.argmax(candidate)) == int(action)
+        ):
+            aligned.append(candidate.copy())
+            continue
+
+        executed = np.zeros(action_size, dtype=np.float32)
+        executed[int(action)] = 1.0
+        aligned.append(executed)
+
+    return aligned
+
+
 @Registry.register_model('maddpg_v2')
 class MADDPGAgent(RLAgent):
     def __init__(self, world, rank):
@@ -46,6 +98,7 @@ class MADDPGAgent(RLAgent):
             ag.create_model(obs_dim, actions_dim)
 
     def reset(self):
+        self.prob = []
         for ag in self.agents:
             ag.reset()
 
@@ -89,15 +142,34 @@ class MADDPGAgent(RLAgent):
 
             action = np.argmax(p)
             actions.append(action)
-            self.prob.append(p)
+            self.prob.append(np.asarray(p, dtype=np.float32).copy())
         return actions
 
     def sample(self):
-        return np.random.randint(0, self.action_space.n, self.sub_agents)
+        actions = np.asarray(
+            [np.random.randint(0, ag.action_space.n) for ag in self.agents],
+            dtype=np.int64,
+        )
+        self.prob = []
+        for action, ag in zip(actions, self.agents):
+            action_vector = np.zeros(ag.action_space.n, dtype=np.float32)
+            action_vector[action] = 1.0
+            self.prob.append(action_vector)
+        return actions
 
     def get_action_prob(self, obs, phase):
-        self.get_action(obs, phase)
-        return np.stack(self.prob)
+        if len(self.prob) != len(self.agents):
+            # Preserve the public method's standalone behavior.  In the normal
+            # trainer path get_action/sample has already populated the cache,
+            # so this does not draw a second Gumbel sample for that decision.
+            self.get_action(obs, phase)
+        probabilities = [prob.copy() for prob in self.prob]
+        try:
+            return np.stack(probabilities)
+        except ValueError:
+            # Networks with heterogeneous action counts cannot be represented
+            # by one rectangular ndarray, but replay batching supports a list.
+            return probabilities
 
     def save_model(self, e=""):
         print('... saving checkpoint ...')
@@ -110,7 +182,14 @@ class MADDPGAgent(RLAgent):
             agent.load_models()
 
     def remember(self, last_obs, last_phase, actions, actions_prob, rewards, obs, cur_phase, done, key):
-        self.replay_buffer.append((key, (last_obs, last_phase, actions_prob, rewards, obs, cur_phase)))
+        replay_actions = _align_action_probabilities(
+            actions,
+            actions_prob,
+            [ag.action_space.n for ag in self.agents],
+        )
+        self.replay_buffer.append(
+            (key, (last_obs, last_phase, replay_actions, rewards, obs, cur_phase))
+        )
 
     def _batchwise(self, samples):
         # TODO add phase and onehot later
@@ -147,12 +226,12 @@ class MADDPGAgent(RLAgent):
         all_agents_new_actions = []
         all_agents_new_mu_actions = []
         old_agents_actions = []
+        with torch.no_grad():
+            for idx, ag in enumerate(self.agents):
+                new_states = actor_new_states[idx]
+                new_pi = ag.target_actor.forward(new_states)
+                all_agents_new_actions.append(new_pi)
         for idx, ag in enumerate(self.agents):
-            #ag.actor.optimizer.zero_grad()
-
-            new_states = actor_new_states[idx]
-            new_pi = ag.target_actor.forward(new_states)
-            all_agents_new_actions.append(new_pi)
             mu_states = actor_states[idx]
             pi = ag.actor.forward(mu_states)
             all_agents_new_mu_actions.append(pi)
@@ -165,14 +244,14 @@ class MADDPGAgent(RLAgent):
             agent.actor.optimizer.zero_grad()
 
         for idx, ag in enumerate(self.agents):
-            critic_value_ = ag.target_critic.forward(states_, new_actions).flatten()
+            with torch.no_grad():
+                critic_value_ = ag.target_critic.forward(states_, new_actions).flatten()
+                target = rewards[idx].flatten() + ag.gamma * critic_value_
             critic_value = ag.critic.forward(states, old_actions).flatten()
-            target = rewards[idx].flatten() + ag.gamma * critic_value_
             critic_loss = ag.loss(target, critic_value)
 
             ag.critic.optimizer.zero_grad()
-            #critic_loss.backward()
-            critic_loss.backward(retain_graph=True)
+            critic_loss.backward()
             clip_grad_norm_(ag.critic.parameters(), ag.grad_clip)
             ag.critic.optimizer.step()
 
@@ -274,8 +353,9 @@ class MADDPG_SUBAgent(object):
     """
     def choose_action(self, observation, test=False):
         state = torch.tensor(observation[np.newaxis], dtype=torch.float32)
-        actions = self.actor.forward(state)
-        actions = actions.detach().cpu().numpy()[0]
+        with torch.no_grad():
+            actions = self.actor.forward(state)
+        actions = actions.cpu().numpy()[0]
         return actions
 
     def update_network_parameters(self, tau=None):

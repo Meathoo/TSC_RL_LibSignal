@@ -1,0 +1,76 @@
+includes:
+  - configs/tsc/mappo.yml
+
+
+model:
+  name: mat
+  train_model: True
+  test_model: True
+  load_model: False
+  graphic: True
+
+  # MAT baseline: no hypernetwork. Keep MAPPO-style centralized critic.
+  centralized_critic: True
+  centralized_critic_mode: pooled
+  native_use_agent_id: False
+
+  # Keep the current HyperLight comparison surface.
+  phase: True
+  one_hot: True
+  state_features: ["lane_count", "lane_waiting_count"]
+  vehicle_max: 50
+  reward_mode: queue
+  pressure_balance_coef: 0.2
+  pressure_release_coef: 0.0
+
+  learning_rate: 0.0001
+  adam_eps: 0.00001
+  gamma: 0.99
+  gae_lambda: 0.95
+  policy_objective: ppo
+  clip_eps: 0.2
+  spo_eps: 0.2
+  clip_vf: 0.2
+  entropy_coef: 0.001 #0.01
+  value_coef: 0.5
+  reward_scale: 0.05
+  grad_clip: 0.5
+
+  ppo_epochs: 4
+  ppo_rollout_steps: 360
+  ppo_minibatch_size: 2048
+  normalize_advantage: True
+  test_action_mode: argmax
+  test_temperature: 1.0
+
+  mat_d_model: 64 #96
+  mat_n_heads: 4
+  mat_encoder_layers: 1 #2
+  mat_decoder_layers: 1
+  mat_value_layers: 1 #2
+  mat_ffn_dim: 128 #192
+  mat_dropout: 0.0 #0.1
+  mat_activation: gelu
+  mat_agent_embedding_mode: learned  # learned | one_hot | none
+  mat_decode_mode: autoregressive          # parallel | autoregressive
+  mat_norm_first: True
+
+
+trainer:
+  learning_start: -1
+  buffer_size: 1000
+  steps: 3600
+  test_steps: 3600
+  action_interval: 10
+  episodes: 250
+  update_model_rate: 1
+  update_target_rate: 1
+  test_when_train: True
+  test_interval: 5
+  early_stop_patience: 0
+  load_best_for_test: True
+
+
+logger:
+  save_rate: 200
+  attention: False

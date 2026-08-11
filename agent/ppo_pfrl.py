@@ -196,10 +196,12 @@ class IPPO_pfrl(RLAgent):
                          max_grad_norm=0.5)
 
     def load_model(self, e):
-        model_name = os.path.join(Registry.mapping['logger_mapping']['output_path'].path,
+        model_name = os.path.join(Registry.mapping['logger_mapping']['path'].path,
                                   'model', f'{e}_{self.rank}.pt')
         self._build_model()
-        self.model.load_state_dict(torch.load(model_name))
+        self.model.load_state_dict(
+            torch.load(model_name, map_location='cpu', weights_only=True)
+        )
 
     def save_model(self, e):
         path = os.path.join(Registry.mapping['logger_mapping']['path'].path, 'model')
@@ -207,4 +209,3 @@ class IPPO_pfrl(RLAgent):
             os.makedirs(path)
         model_name = os.path.join(path, f'{e}_{self.rank}.pt')
         torch.save(self.model.state_dict(), model_name)
-

@@ -47,6 +47,16 @@ class TSCTrainer(BaseTrainer):
         self.load_best_for_test = bool(
             Registry.mapping['trainer_mapping']['setting'].param.get('load_best_for_test', True)
         )
+        self.resume_episode = int(
+            Registry.mapping['trainer_mapping']['setting'].param.get('resume_episode', 0) or 0
+        )
+        if self.resume_episode < 0:
+            raise ValueError('trainer.resume_episode must be non-negative')
+        if self.resume_episode >= self.episodes:
+            raise ValueError(
+                'trainer.resume_episode must be smaller than trainer.episodes '
+                f'(got {self.resume_episode} >= {self.episodes})'
+            )
         self.best_test_travel_time = float('inf')
         self.best_test_episode = -1
         self.no_improve_rounds = 0
@@ -65,6 +75,9 @@ class TSCTrainer(BaseTrainer):
                                      Registry.mapping['logger_mapping']['setting'].param['log_dir'],
                                      os.path.basename(self.logger.handlers[-1].baseFilename).rstrip('_BRF.log') + '_DTL.log'
                                      )
+        self.cos_log_file = self.log_file.replace('_DTL.log', '_COS.log')
+        self.residual_log_file = self.log_file.replace('_DTL.log', '_RES.log')
+        self.performance_log_file = self.log_file.replace('_DTL.log', '_PERF.log')
 
     def create_world(self):
         '''
@@ -134,9 +147,18 @@ class TSCTrainer(BaseTrainer):
         :param: None
         :return: None
         '''
-        total_decision_num = 0
+        if self.resume_episode > 0:
+            [ag.load_model(self.resume_episode) for ag in self.agents]
+            self.logger.info(
+                'Resumed training from episode %d; continuing through episode %d',
+                self.resume_episode,
+                self.episodes - 1,
+            )
+
+        decisions_per_episode = max(1, self.steps // self.action_interval)
+        total_decision_num = self.resume_episode * decisions_per_episode
         flush = 0
-        for e in range(self.episodes):
+        for e in range(self.resume_episode, self.episodes):
             # TODO: check this reset agent
             self.metric.clear()
             last_obs = self.env.reset()  # agent * [sub_agent, feature]
@@ -210,6 +232,36 @@ class TSCTrainer(BaseTrainer):
                 mean_delay = self.metric.delay()
                 throughput = self.metric.throughput()
                 self.writeLog("TRAIN", e, travel_time, mean_loss, mean_reward, mean_queue, mean_delay, throughput)
+                cos_diagnostics = self._collect_cos_diagnostics(source='episode')
+                if cos_diagnostics:
+                    self.writeCosLog("TRAIN", e, cos_diagnostics)
+                    self.logger.info(
+                        "cos_diagnostics: {}".format(self._format_cos_diagnostics(cos_diagnostics))
+                    )
+                residual_diagnostics = self._collect_residual_diagnostics(source='episode')
+                if residual_diagnostics:
+                    self.writeResidualLog("TRAIN", e, residual_diagnostics)
+                    self.logger.info(
+                        "residual_diagnostics: {}".format(
+                            self._format_residual_diagnostics(residual_diagnostics)
+                        )
+                    )
+                residual_update_diagnostics = self._collect_residual_diagnostics(source='update')
+                if residual_update_diagnostics:
+                    self.writeResidualLog("TRAIN_UPDATE", e, residual_update_diagnostics)
+                    self.logger.info(
+                        "residual_update_diagnostics: {}".format(
+                            self._format_residual_diagnostics(residual_update_diagnostics)
+                        )
+                    )
+                performance_diagnostics = self._collect_performance_diagnostics()
+                if performance_diagnostics:
+                    self.writePerformanceLog("TRAIN", e, performance_diagnostics)
+                    self.logger.info(
+                        "performance_diagnostics: {}".format(
+                            self._format_performance_diagnostics(performance_diagnostics)
+                        )
+                    )
                 self.logger.info(
                     "step:{}/{}, q_loss:{}, rewards:{}, queue:{}, delay:{}, throughput:{}".format(
                         i, self.steps, mean_loss, mean_reward, mean_queue, mean_delay, int(throughput)
@@ -280,12 +332,42 @@ class TSCTrainer(BaseTrainer):
                 self.metric.update(rewards)
             if all(dones):
                 break
-        self.logger.info("Test step:{}/{}, travel time :{}, rewards:{}, queue:{}, delay:{}, throughput:{}".format(\
-            e, self.episodes, self.metric.real_average_travel_time(), self.metric.rewards(),\
-            self.metric.queue(), self.metric.delay(), int(self.metric.throughput())))
-        self.writeLog("TEST", e, self.metric.real_average_travel_time(),\
-            train_loss, self.metric.rewards(),self.metric.queue(),self.metric.delay(), self.metric.throughput())
-        return self.metric.real_average_travel_time()
+        travel_time = self.metric.real_average_travel_time()
+        mean_reward = self.metric.rewards()
+        mean_queue = self.metric.queue()
+        mean_delay = self.metric.delay()
+        throughput = self.metric.throughput()
+        self.logger.info(
+            "Test step:{}/{}, travel time :{}, rewards:{}, queue:{}, delay:{}, throughput:{}".format(
+                e, self.episodes, travel_time, mean_reward, mean_queue, mean_delay, int(throughput)
+            )
+        )
+        self.writeLog(
+            "TEST", e, travel_time, train_loss, mean_reward, mean_queue, mean_delay, throughput
+        )
+        cos_diagnostics = self._collect_cos_diagnostics(source='episode')
+        if cos_diagnostics:
+            self.writeCosLog("TEST", e, cos_diagnostics)
+            self.logger.info(
+                "test_cos_diagnostics: {}".format(self._format_cos_diagnostics(cos_diagnostics))
+            )
+        residual_diagnostics = self._collect_residual_diagnostics(source='episode')
+        if residual_diagnostics:
+            self.writeResidualLog("TEST", e, residual_diagnostics)
+            self.logger.info(
+                "test_residual_diagnostics: {}".format(
+                    self._format_residual_diagnostics(residual_diagnostics)
+                )
+            )
+        performance_diagnostics = self._collect_performance_diagnostics()
+        if performance_diagnostics:
+            self.writePerformanceLog("TEST", e, performance_diagnostics)
+            self.logger.info(
+                "test_performance_diagnostics: {}".format(
+                    self._format_performance_diagnostics(performance_diagnostics)
+                )
+            )
+        return travel_time
 
     def test(self, drop_load=True):
         '''
@@ -333,9 +415,230 @@ class TSCTrainer(BaseTrainer):
                 self.metric.update(rewards)
             if all(dones):
                 break
-        self.logger.info("Final Travel Time is %.4f, mean rewards: %.4f, queue: %.4f, delay: %.4f, throughput: %d" % (self.metric.real_average_travel_time(), \
-            self.metric.rewards(), self.metric.queue(), self.metric.delay(), self.metric.throughput()))
+        travel_time = self.metric.real_average_travel_time()
+        mean_reward = self.metric.rewards()
+        mean_queue = self.metric.queue()
+        mean_delay = self.metric.delay()
+        throughput = self.metric.throughput()
+        self.logger.info(
+            "Final Travel Time is %.4f, mean rewards: %.4f, queue: %.4f, delay: %.4f, throughput: %d"
+            % (travel_time, mean_reward, mean_queue, mean_delay, throughput)
+        )
         return self.metric
+
+    @staticmethod
+    def _mean_cos_diagnostics(diagnostics):
+        if not diagnostics:
+            return {}
+        keys = sorted({key for item in diagnostics for key in item})
+        averaged = {}
+        for key in keys:
+            values = [
+                float(item[key])
+                for item in diagnostics
+                if key in item and np.isfinite(float(item[key]))
+            ]
+            if values:
+                averaged[key] = float(np.mean(values))
+        return averaged
+
+    def _collect_cos_diagnostics(self, source='update'):
+        diagnostics = []
+        for agent in self.agents:
+            method_name = 'get_cos_episode_diagnostics' if source == 'episode' else 'get_cos_diagnostics'
+            get_diagnostics = getattr(agent, method_name, None)
+            if not callable(get_diagnostics):
+                continue
+            agent_diagnostics = get_diagnostics()
+            if agent_diagnostics:
+                diagnostics.append(agent_diagnostics)
+        return self._mean_cos_diagnostics(diagnostics)
+
+    def _collect_residual_diagnostics(self, source='update'):
+        diagnostics = []
+        for agent in self.agents:
+            method_name = (
+                'get_residual_episode_diagnostics'
+                if source == 'episode'
+                else 'get_residual_diagnostics'
+            )
+            get_diagnostics = getattr(agent, method_name, None)
+            if not callable(get_diagnostics):
+                continue
+            agent_diagnostics = get_diagnostics()
+            if agent_diagnostics:
+                diagnostics.append(agent_diagnostics)
+        return self._mean_cos_diagnostics(diagnostics)
+
+    def _collect_performance_diagnostics(self):
+        diagnostics = []
+        for agent in self.agents:
+            get_diagnostics = getattr(agent, 'get_performance_diagnostics', None)
+            if not callable(get_diagnostics):
+                continue
+            agent_diagnostics = get_diagnostics()
+            if agent_diagnostics:
+                diagnostics.append(agent_diagnostics)
+        return self._mean_cos_diagnostics(diagnostics)
+
+    @staticmethod
+    def _cos_diagnostic_keys():
+        return [
+            'cos_entropy',
+            'cos_self_selection_rate',
+            'cos_avg_selected_hop',
+            'cos_avg_selected_distance',
+            'cos_diag_mass',
+            'cos_symmetry_loss',
+        ]
+
+    def _format_cos_diagnostics(self, diagnostics):
+        return ', '.join(
+            '{}:{:.6f}'.format(key, diagnostics[key])
+            for key in self._cos_diagnostic_keys()
+            if key in diagnostics
+        )
+
+    @staticmethod
+    def _residual_diagnostic_keys():
+        return [
+            'hyper_adapter_is_film',
+            'film_scale',
+            'film_param_dim',
+            'film_gamma_abs_mean',
+            'film_beta_abs_mean',
+            'hyper_residual_actor_scale',
+            'hyper_residual_value_scale',
+            'hyper_residual_is_lora',
+            'hyper_residual_is_head',
+            'hyper_head_actor_param_dim',
+            'hyper_head_value_param_dim',
+            'hyper_lora_actor_rank',
+            'hyper_lora_value_rank',
+            'actor_base_norm',
+            'actor_delta_norm',
+            'actor_delta_base_ratio',
+            'actor_delta_max_abs',
+            'actor_theta_norm',
+            'actor_head_base_norm',
+            'actor_head_delta_norm',
+            'actor_head_delta_base_ratio',
+            'actor_head_delta_max_abs',
+            'actor_head_theta_norm',
+            'value_base_norm',
+            'value_delta_norm',
+            'value_delta_base_ratio',
+            'value_delta_max_abs',
+            'value_theta_norm',
+            'value_head_base_norm',
+            'value_head_delta_norm',
+            'value_head_delta_base_ratio',
+            'value_head_delta_max_abs',
+            'value_head_theta_norm',
+            'policy_logit_std',
+            'policy_logit_abs_mean',
+            'value_std',
+            'value_abs_mean',
+            'meta_norm',
+            'meta_std',
+        ]
+
+    def _format_residual_diagnostics(self, diagnostics):
+        return ', '.join(
+            '{}:{:.6f}'.format(key, diagnostics[key])
+            for key in self._residual_diagnostic_keys()
+            if key in diagnostics
+        )
+
+    @staticmethod
+    def _performance_diagnostic_keys():
+        return [
+            'parameter_count',
+            'actor_parameter_count',
+            'value_parameter_count',
+            'embedding_parameter_count',
+            'decision_count',
+            'decision_latency_ms_mean',
+            'decision_time_ms_total',
+            'update_count',
+            'update_time_ms_mean',
+            'update_time_ms_total',
+            'gpu_peak_memory_mb',
+            'gpu_peak_reserved_mb',
+        ]
+
+    def _format_performance_diagnostics(self, diagnostics):
+        return ', '.join(
+            '{}:{:.6f}'.format(key, diagnostics[key])
+            for key in self._performance_diagnostic_keys()
+            if key in diagnostics
+        )
+
+    def writeCosLog(self, mode, step, diagnostics):
+        if not diagnostics:
+            return
+
+        keys = self._cos_diagnostic_keys()
+        needs_header = (not os.path.exists(self.cos_log_file)) or os.path.getsize(self.cos_log_file) == 0
+        with open(self.cos_log_file, "a") as log_handle:
+            if needs_header:
+                log_handle.write("model\tmode\tstep\t" + "\t".join(keys) + "\n")
+            res = (
+                Registry.mapping['model_mapping']['setting'].param['name']
+                + '\t' + mode
+                + '\t' + str(step)
+                + '\t' + '\t'.join(
+                    "{:.6f}".format(diagnostics[key]) if key in diagnostics else ""
+                    for key in keys
+                )
+            )
+            log_handle.write(res + "\n")
+
+    def writeResidualLog(self, mode, step, diagnostics):
+        if not diagnostics:
+            return
+
+        keys = self._residual_diagnostic_keys()
+        needs_header = (
+            (not os.path.exists(self.residual_log_file))
+            or os.path.getsize(self.residual_log_file) == 0
+        )
+        with open(self.residual_log_file, "a") as log_handle:
+            if needs_header:
+                log_handle.write("model\tmode\tstep\t" + "\t".join(keys) + "\n")
+            res = (
+                Registry.mapping['model_mapping']['setting'].param['name']
+                + '\t' + mode
+                + '\t' + str(step)
+                + '\t' + '\t'.join(
+                    "{:.6f}".format(diagnostics[key]) if key in diagnostics else ""
+                    for key in keys
+                )
+            )
+            log_handle.write(res + "\n")
+
+    def writePerformanceLog(self, mode, step, diagnostics):
+        if not diagnostics:
+            return
+
+        keys = self._performance_diagnostic_keys()
+        needs_header = (
+            (not os.path.exists(self.performance_log_file))
+            or os.path.getsize(self.performance_log_file) == 0
+        )
+        with open(self.performance_log_file, "a") as log_handle:
+            if needs_header:
+                log_handle.write("model\tmode\tstep\t" + "\t".join(keys) + "\n")
+            res = (
+                Registry.mapping['model_mapping']['setting'].param['name']
+                + '\t' + mode
+                + '\t' + str(step)
+                + '\t' + '\t'.join(
+                    "{:.6f}".format(diagnostics[key]) if key in diagnostics else ""
+                    for key in keys
+                )
+            )
+            log_handle.write(res + "\n")
 
     def writeLog(self, mode, step, travel_time, loss, cur_rwd, cur_queue, cur_delay, cur_throughput):
         '''

@@ -1,0 +1,20 @@
+includes:
+  - configs/tsc/mappo.yml
+
+
+model:
+  # Pure MAPPO + within-decision IRU computation. The existing mappo.yml
+  # remains the unchanged shared-MLP baseline.
+  name: mappo_iru
+  native_actor_arch: iru       # mlp | iru
+  native_value_arch: iru       # mlp | iru
+  iru_hidden_dim: 64
+  iru_num_blocks: 1
+  iru_steps: 5                 # sweep with --iru_steps 1, 2, 5
+  iru_layer_norm: True
+  profile_performance: True
+
+
+trainer:
+  early_stop_patience: 0
+  episodes: 250
