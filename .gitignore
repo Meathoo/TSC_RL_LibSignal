@@ -28,4 +28,4 @@ avg_compare_outputs/paper_table_*.csv
 /RegionLight.pdf
 
 # Windows 下載檔案留下的 NTFS 元資料，完全沒用
-*:Zone.Identifier
+*:Zone.Identifier*:Zone.Identifier
